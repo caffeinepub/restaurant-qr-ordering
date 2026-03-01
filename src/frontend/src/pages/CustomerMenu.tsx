@@ -15,22 +15,22 @@ import { toast } from "sonner";
 import { useActor } from "../hooks/useActor";
 import { useRestaurantStore } from "../restaurantDataStore";
 import { useSellerStore } from "../sellerStore";
-import type { CartItem, MenuCategory, QRPayload } from "../types";
+import type { CartItem, MenuCategory, MenuItem, QRPayload } from "../types";
+import { fetchMenuFromBackend } from "../utils/menuSync";
 import { syncOrderToBackend } from "../utils/orderSync";
 import {
-  compactToQRPayload,
-  decodeCompactMenu,
+  decodeMenuFromQR,
   decodeQRPayload,
   loadMenuSnapshot,
 } from "../utils/qrPayload";
 
 interface Props {
-  // Newest format: ?d=BASE64 — menu fully embedded in URL
-  menuPayload?: string;
-  // Legacy compact format: ?r=ID&t=ID (needs localStorage on same device)
+  // Primary format: ?r=ID&t=ID&tn=TABLE_NUMBER&d=MENU_BASE64
   restaurantId?: string;
   tableId?: string;
-  // Legacy base64 format
+  tableNumber?: string;
+  menuData?: string; // base64-encoded compact menu (from ?d= param)
+  // Legacy base64 format: ?qr=BASE64
   qrParam?: string;
 }
 
@@ -610,38 +610,6 @@ function CustomerMenuInner({ payload }: { payload: QRPayload }) {
   );
 }
 
-/**
- * MenuPayloadLoader — the main QR loader.
- * Decodes the ?d= parameter which contains the full menu embedded in the URL.
- * Works on ANY device without requiring localStorage.
- */
-function MenuPayloadLoader({ encodedPayload }: { encodedPayload: string }) {
-  const compact = useMemo(
-    () => decodeCompactMenu(encodedPayload),
-    [encodedPayload],
-  );
-
-  if (!compact) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center p-4">
-        <div className="text-center max-w-sm">
-          <div className="text-6xl mb-4">⚠️</div>
-          <h2 className="text-2xl font-display font-bold text-foreground mb-2">
-            Invalid QR Code
-          </h2>
-          <p className="text-muted-foreground">
-            This QR code could not be read. Please ask staff for a new QR code
-            at your table.
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  const payload = compactToQRPayload(compact);
-  return <CustomerMenuInner payload={payload} />;
-}
-
 function LegacyQRLoader({ qrParam }: { qrParam: string }) {
   const payload = useMemo(() => decodeQRPayload(qrParam), [qrParam]);
 
@@ -665,40 +633,113 @@ function LegacyQRLoader({ qrParam }: { qrParam: string }) {
   return <CustomerMenuInner payload={payload} />;
 }
 
+/**
+ * CompactQRLoader — Primary QR loader for ?r=ID&t=ID&tn=NAME&d=MENU_BASE64 URLs.
+ *
+ * Load order:
+ * 1. Decode menu from the ?d= URL param (embedded at QR generation time) — works on ANY device instantly
+ * 2. Fall back to localStorage snapshot (same browser, admin device)
+ * 3. Try ICP canister as last resort
+ * 4. Show error only if all three fail
+ */
 function CompactQRLoader({
   restaurantId,
   tableId,
+  tableNumber: tableNumberProp,
+  menuData,
 }: {
   restaurantId: string;
   tableId: string;
+  tableNumber: string;
+  menuData?: string;
 }) {
-  const [payload, setPayload] = useState<QRPayload | null>(null);
-  const [loading, setLoading] = useState(true);
+  const tn = tableNumberProp || "Table";
 
-  const { tables } = useRestaurantStore(restaurantId);
+  // STEP 1: Decode from the ?d= param immediately (synchronous, no network needed)
+  const [payload, setPayload] = useState<QRPayload | null>(() => {
+    if (menuData) {
+      const decoded = decodeMenuFromQR(menuData, restaurantId, tableId, tn);
+      if (decoded) return decoded;
+    }
+    return null;
+  });
+
+  const [loading, setLoading] = useState(!payload); // only show spinner if step 1 failed
+  const { actor } = useActor();
+  const actorRef = useRef(actor);
+  actorRef.current = actor;
 
   useEffect(() => {
-    // Try to load menu snapshot from localStorage (saved by admin on same origin)
-    const snapshot = loadMenuSnapshot(restaurantId);
-    if (snapshot) {
-      // Find table info from the restaurant data store
-      const tableObj = tables.find((t) => t.id === tableId);
+    // Already loaded from URL param — nothing more to do
+    if (payload) return;
 
-      const tableNumber = tableObj?.tableNumber ?? "Table";
-      const sessionToken = tableObj?.sessionToken ?? tableId;
+    let cancelled = false;
 
-      setPayload({
-        restaurantId,
-        restaurantName: snapshot.restaurantName,
-        tableId,
-        tableNumber,
-        sessionToken,
-        gstPercent: snapshot.gstPercent,
-        menuItems: snapshot.menuItems,
-      });
+    async function loadMenuFallback() {
+      // STEP 2: localStorage snapshot (same browser where admin logged in)
+      const snapshot = loadMenuSnapshot(restaurantId);
+      if (snapshot) {
+        if (!cancelled) {
+          setPayload({
+            restaurantId,
+            restaurantName: snapshot.restaurantName,
+            tableId,
+            tableNumber: tn,
+            sessionToken: tableId,
+            gstPercent: snapshot.gstPercent,
+            menuItems: snapshot.menuItems.filter((i) => i.isAvailable),
+          });
+          setLoading(false);
+        }
+        return;
+      }
+
+      // STEP 3: ICP canister (last resort — requires network + may need auth)
+      const tryCanister = async (actorInstance: typeof actor) => {
+        if (!actorInstance) return false;
+        try {
+          const remote = await fetchMenuFromBackend(
+            actorInstance,
+            restaurantId,
+          );
+          if (remote && !cancelled) {
+            setPayload({
+              restaurantId,
+              restaurantName: remote.restaurantName,
+              tableId,
+              tableNumber: tn,
+              sessionToken: tableId,
+              gstPercent: remote.gstPercent,
+              menuItems: remote.menuItems.filter((i) => i.isAvailable),
+            });
+            setLoading(false);
+            return true;
+          }
+        } catch {
+          // non-fatal
+        }
+        return false;
+      };
+
+      const currentActor = actorRef.current;
+      if (currentActor) {
+        const ok = await tryCanister(currentActor);
+        if (ok) return;
+      } else {
+        // Actor not ready — wait for it
+        await new Promise<void>((resolve) => setTimeout(resolve, 2000));
+        if (cancelled) return;
+        await tryCanister(actorRef.current);
+      }
+
+      if (!cancelled) setLoading(false);
     }
-    setLoading(false);
-  }, [restaurantId, tableId, tables]);
+
+    loadMenuFallback();
+    return () => {
+      cancelled = true;
+    };
+  }, [restaurantId, tableId, tn, payload]);
 
   if (loading) {
     return (
@@ -719,10 +760,10 @@ function CompactQRLoader({
           <h2 className="text-2xl font-display font-bold text-foreground mb-2">
             Menu Not Available
           </h2>
-          <p className="text-muted-foreground">
+          <p className="text-muted-foreground text-sm leading-relaxed">
             The menu could not be loaded. Please ask a staff member to open the
-            Admin Panel and go to <strong>Tables &amp; QR</strong> to refresh
-            the menu, then scan again.
+            Admin Panel, go to <strong>Tables &amp; QR</strong>, and reprint the
+            QR codes — then scan the new QR code.
           </p>
         </div>
       </div>
@@ -733,22 +774,25 @@ function CompactQRLoader({
 }
 
 export default function CustomerMenu({
-  menuPayload,
   restaurantId,
   tableId,
+  tableNumber,
+  menuData,
   qrParam,
 }: Props) {
-  // PRIMARY format: ?d=BASE64 — menu fully embedded in URL, works on any device
-  if (menuPayload) {
-    return <MenuPayloadLoader encodedPayload={menuPayload} />;
-  }
-
-  // Legacy compact format: restaurantId + tableId (needs localStorage on same device)
+  // PRIMARY format: ?r=ID&t=ID&tn=TABLE_NAME&d=MENU_BASE64
   if (restaurantId && tableId) {
-    return <CompactQRLoader restaurantId={restaurantId} tableId={tableId} />;
+    return (
+      <CompactQRLoader
+        restaurantId={restaurantId}
+        tableId={tableId}
+        tableNumber={tableNumber ?? "Table"}
+        menuData={menuData}
+      />
+    );
   }
 
-  // Legacy base64 format
+  // Legacy base64 format: ?qr=BASE64
   if (qrParam) {
     return <LegacyQRLoader qrParam={qrParam} />;
   }

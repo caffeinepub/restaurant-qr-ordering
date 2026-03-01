@@ -30,19 +30,19 @@ function getQRParam(): string | null {
   return new URLSearchParams(window.location.search).get("qr");
 }
 
-/** New format: ?d=BASE64_ENCODED_COMPACT_MENU — menu embedded in URL */
-function getMenuPayloadParam(): string | null {
-  return new URLSearchParams(window.location.search).get("d");
-}
-
 function getCompactQRParams(): {
   restaurantId: string;
   tableId: string;
+  tableNumber: string;
+  menuData: string | null;
 } | null {
   const params = new URLSearchParams(window.location.search);
   const r = params.get("r");
   const t = params.get("t");
-  if (r && t) return { restaurantId: r, tableId: t };
+  const tn = params.get("tn") ?? "Table";
+  const d = params.get("d");
+  if (r && t)
+    return { restaurantId: r, tableId: t, tableNumber: tn, menuData: d };
   return null;
 }
 
@@ -57,7 +57,6 @@ export default function App() {
   );
 
   const qrParam = getQRParam();
-  const menuPayload = getMenuPayloadParam();
   const compactQR = getCompactQRParams();
   const legacyTableToken = getLegacyTableToken();
 
@@ -90,23 +89,15 @@ export default function App() {
     navigate("home");
   }
 
-  // NEW format: ?d=BASE64_COMPACT_MENU — menu fully embedded in URL, works on any device
-  if (menuPayload) {
-    return (
-      <>
-        <CustomerMenu menuPayload={menuPayload} />
-        <Toaster richColors position="top-center" />
-      </>
-    );
-  }
-
-  // Legacy compact QR format: ?r=RESTAURANT_ID&t=TABLE_ID (old format, needs localStorage)
+  // PRIMARY QR format: ?r=RESTAURANT_ID&t=TABLE_ID&tn=TABLE_NAME&d=MENU_BASE64
   if (compactQR) {
     return (
       <>
         <CustomerMenu
           restaurantId={compactQR.restaurantId}
           tableId={compactQR.tableId}
+          tableNumber={compactQR.tableNumber}
+          menuData={compactQR.menuData ?? undefined}
         />
         <Toaster richColors position="top-center" />
       </>

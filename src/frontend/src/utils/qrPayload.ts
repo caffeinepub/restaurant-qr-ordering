@@ -70,33 +70,125 @@ export function loadMenuSnapshot(restaurantId: string): MenuSnapshot | null {
 
 // ---- Compact URL-embedded QR payload ----
 // This solves the cross-device problem: the entire menu is encoded into
-// the QR URL so a customer's phone can decode it without any localStorage.
+// the QR URL as a `?d=BASE64` param so a customer's phone can decode it
+// without any localStorage or backend calls.
 //
 // Field names are deliberately short to minimise QR code density:
-//   r  = restaurantId
 //   rn = restaurantName
-//   t  = tableId
-//   tn = tableNumber
 //   g  = gstPercent
 //   m  = menu items array
-//     i = id, n = name, c = category, p = price, e = emoji, a = isAvailable
+//     i = id (first 8 chars only), n = name, c = category index (0-3),
+//     p = price, e = emoji
+
+const CATEGORY_MAP = [
+  "Starters",
+  "Main Course",
+  "Beverages",
+  "Desserts",
+] as const;
 
 export interface CompactMenuPayload {
-  r: string; // restaurantId
   rn: string; // restaurantName
-  t: string; // tableId
-  tn: string; // tableNumber
   g: number; // gstPercent
   m: Array<{
-    i: string; // id
+    i: string; // id (shortened)
     n: string; // name
-    c: string; // category
+    c: number; // category index
     p: number; // price
     e: string; // emoji
   }>;
 }
 
-export function encodeCompactMenu(payload: CompactMenuPayload): string {
+/**
+ * Encode the menu into a URL-safe base64 string for embedding in QR URLs.
+ * Only available items are included. Images are excluded to keep it small.
+ */
+export function encodeMenuForQR(
+  restaurantName: string,
+  gstPercent: number,
+  menuItems: MenuItem[],
+): string {
+  try {
+    const payload: CompactMenuPayload = {
+      rn: restaurantName,
+      g: gstPercent,
+      m: menuItems
+        .filter((item) => item.isAvailable)
+        .map((item) => ({
+          i: item.id.slice(0, 8),
+          n: item.name,
+          c: CATEGORY_MAP.indexOf(
+            item.category as (typeof CATEGORY_MAP)[number],
+          ),
+          p: item.price,
+          e: item.emoji || "🍽️",
+        })),
+    };
+    // Use URL-safe base64. encodeURIComponent handles emoji/Unicode safely.
+    return btoa(unescape(encodeURIComponent(JSON.stringify(payload))))
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/, "");
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Decode a QR menu payload from a URL-safe base64 string.
+ */
+export function decodeMenuFromQR(
+  encoded: string,
+  restaurantId: string,
+  tableId: string,
+  tableNumber: string,
+): QRPayload | null {
+  try {
+    // Restore standard base64 from URL-safe variant, handle Unicode
+    const b64 = encoded.replace(/-/g, "+").replace(/_/g, "/");
+    const json = decodeURIComponent(escape(atob(b64)));
+    const parsed = JSON.parse(json) as CompactMenuPayload;
+    if (
+      typeof parsed.rn !== "string" ||
+      typeof parsed.g !== "number" ||
+      !Array.isArray(parsed.m)
+    ) {
+      return null;
+    }
+    return {
+      restaurantId,
+      restaurantName: parsed.rn,
+      tableId,
+      tableNumber,
+      sessionToken: tableId,
+      gstPercent: parsed.g,
+      menuItems: parsed.m.map((item) => ({
+        id: item.i,
+        name: item.n,
+        category: (CATEGORY_MAP[item.c] ?? "Starters") as MenuItem["category"],
+        price: item.p,
+        emoji: item.e,
+        description: "",
+        imageUrl: undefined,
+        isAvailable: true,
+      })),
+    };
+  } catch {
+    return null;
+  }
+}
+
+// Keep legacy exports for backward compat with old base64 QR format
+export interface CompactMenuPayloadLegacy {
+  r: string;
+  rn: string;
+  t: string;
+  tn: string;
+  g: number;
+  m: Array<{ i: string; n: string; c: string; p: number; e: string }>;
+}
+
+export function encodeCompactMenu(payload: CompactMenuPayloadLegacy): string {
   try {
     return btoa(encodeURIComponent(JSON.stringify(payload)));
   } catch {
@@ -104,7 +196,9 @@ export function encodeCompactMenu(payload: CompactMenuPayload): string {
   }
 }
 
-export function decodeCompactMenu(encoded: string): CompactMenuPayload | null {
+export function decodeCompactMenu(
+  encoded: string,
+): CompactMenuPayloadLegacy | null {
   try {
     const json = decodeURIComponent(atob(encoded));
     const parsed = JSON.parse(json);
@@ -116,7 +210,7 @@ export function decodeCompactMenu(encoded: string): CompactMenuPayload | null {
       typeof parsed.g === "number" &&
       Array.isArray(parsed.m)
     ) {
-      return parsed as CompactMenuPayload;
+      return parsed as CompactMenuPayloadLegacy;
     }
     return null;
   } catch {
@@ -124,17 +218,15 @@ export function decodeCompactMenu(encoded: string): CompactMenuPayload | null {
   }
 }
 
-/**
- * Build a QRPayload (used by CustomerMenuInner) from a decoded CompactMenuPayload.
- * Image URLs are not embedded in QR codes for size reasons — emoji fallback is used.
- */
-export function compactToQRPayload(compact: CompactMenuPayload): QRPayload {
+export function compactToQRPayload(
+  compact: CompactMenuPayloadLegacy,
+): QRPayload {
   return {
     restaurantId: compact.r,
     restaurantName: compact.rn,
     tableId: compact.t,
     tableNumber: compact.tn,
-    sessionToken: compact.t, // tableId used as stable token
+    sessionToken: compact.t,
     gstPercent: compact.g,
     menuItems: compact.m.map((item) => ({
       id: item.i,
