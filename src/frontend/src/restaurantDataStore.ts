@@ -56,20 +56,54 @@ interface RestaurantStore extends AppState {
 // Map of store instances keyed by restaurantId
 const storeMap = new Map<string, StoreApi<RestaurantStore>>();
 
+type InitialRestaurantState = AppState & { _hasHydrated: boolean };
+
+// Synchronously read restaurant data from localStorage so the store is
+// already hydrated on first render — prevents "Restaurant Not Found" on QR scans.
+function getInitialRestaurantState(
+  restaurantId: string,
+): InitialRestaurantState {
+  const defaults: InitialRestaurantState = {
+    menuItems: [],
+    tables: [],
+    orders: [],
+    bills: [],
+    gstPercent: 18,
+    userRole: null,
+    _hasHydrated: false,
+  };
+  try {
+    const raw = localStorage.getItem(`restaurant_data_${restaurantId}`);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      const state = parsed?.state;
+      if (state) {
+        return {
+          menuItems: state.menuItems ?? [],
+          tables: state.tables ?? [],
+          orders: state.orders ?? [],
+          bills: state.bills ?? [],
+          gstPercent: state.gstPercent ?? 18,
+          userRole: state.userRole ?? null,
+          _hasHydrated: true,
+        };
+      }
+    }
+  } catch {
+    // ignore parse errors
+  }
+  return defaults;
+}
+
 function createRestaurantStore(
   restaurantId: string,
 ): StoreApi<RestaurantStore> {
+  const _initialState = getInitialRestaurantState(restaurantId);
   return create<RestaurantStore>()(
     persist(
       (set, get) => ({
-        // Initial state — empty (no sample data)
-        menuItems: [],
-        tables: [],
-        orders: [],
-        bills: [],
-        gstPercent: 18,
-        userRole: null,
-        _hasHydrated: false,
+        // Initial state loaded synchronously from localStorage
+        ..._initialState,
         setHasHydrated: (v) => set({ _hasHydrated: v }),
 
         login: (role) => set({ userRole: role }),
@@ -284,7 +318,9 @@ function createRestaurantStore(
   );
 }
 
-function getOrCreateStore(restaurantId: string): StoreApi<RestaurantStore> {
+export function getOrCreateStore(
+  restaurantId: string,
+): StoreApi<RestaurantStore> {
   if (!storeMap.has(restaurantId)) {
     storeMap.set(restaurantId, createRestaurantStore(restaurantId));
   }

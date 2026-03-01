@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { useRestaurantStore } from "../restaurantDataStore";
+import { getOrCreateStore, useRestaurantStore } from "../restaurantDataStore";
 import { useSellerStore } from "../sellerStore";
 import type { CartItem, MenuCategory } from "../types";
 
@@ -83,6 +83,41 @@ export default function CustomerMenu({ token, restaurantId }: Props) {
       return () => clearTimeout(timer);
     }
   }, [sellerHydrated]);
+
+  // Auto-sync menu: rehydrate restaurant store every 10 seconds so the
+  // customer menu stays up to date when the admin adds or edits items --
+  // no new QR code needed. Also listen for cross-tab storage events.
+  useEffect(() => {
+    const storageKey = `restaurant_data_${restaurantId}`;
+    const sellerKey = "restaurant_seller_state";
+
+    function rehydrateBoth() {
+      const store = getOrCreateStore(restaurantId);
+      // Cast to access the persist API added by zustand/middleware at runtime
+      const persistApi = (
+        store as unknown as { persist?: { rehydrate?: () => void } }
+      ).persist;
+      if (persistApi?.rehydrate) {
+        persistApi.rehydrate();
+      }
+    }
+
+    function handleStorage(e: StorageEvent) {
+      if (e.key === storageKey || e.key === sellerKey) {
+        rehydrateBoth();
+      }
+    }
+
+    // Cross-tab sync
+    window.addEventListener("storage", handleStorage);
+    // Same-device polling (every 10 s) so menu updates even without a tab change
+    const interval = setInterval(rehydrateBoth, 10_000);
+
+    return () => {
+      window.removeEventListener("storage", handleStorage);
+      clearInterval(interval);
+    };
+  }, [restaurantId]);
 
   const filteredItems = useMemo(
     () =>

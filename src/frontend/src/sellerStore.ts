@@ -37,14 +37,40 @@ interface SellerStore extends SellerState {
   getActivePinsForRestaurant: (id: string) => RestaurantPins;
 }
 
+// Synchronously check if we already have data in localStorage so we can
+// set _hasHydrated = true immediately on the first render, avoiding the
+// race condition that caused "Restaurant Not Found" on QR scan page loads.
+function getInitialSellerState(): Pick<
+  SellerState,
+  "restaurants" | "appSuspended" | "_hasHydrated"
+> {
+  try {
+    const raw = localStorage.getItem("restaurant_seller_state");
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      const state = parsed?.state;
+      if (state) {
+        return {
+          restaurants: state.restaurants ?? [],
+          appSuspended: state.appSuspended ?? false,
+          _hasHydrated: true,
+        };
+      }
+    }
+  } catch {
+    // ignore parse errors
+  }
+  return { restaurants: [], appSuspended: false, _hasHydrated: false };
+}
+
+const _initialSellerState = getInitialSellerState();
+
 export const useSellerStore = create<SellerStore>()(
   persist(
     (set, get) => ({
-      restaurants: [],
+      ..._initialSellerState,
       isSellerAuthenticated: false,
-      appSuspended: false,
       activeRestaurantId: null,
-      _hasHydrated: false,
       setHasHydrated: (v) => set({ _hasHydrated: v }),
 
       sellerLogin: () => set({ isSellerAuthenticated: true }),
