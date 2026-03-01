@@ -1,0 +1,166 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --radius: 0.75rem;
+
+    /* Restaurant warm saffron/spice light theme */
+    --background: 0.98 0.005 85;
+    --foreground: 0.18 0.02 50;
+
+    --card: 1 0 0;
+    --card-foreground: 0.18 0.02 50;
+
+    --popover: 1 0 0;
+    --popover-foreground: 0.18 0.02 50;
+
+    /* Warm saffron/turmeric orange as primary */
+    --primary: 0.62 0.18 55;
+    --primary-foreground: 1 0 0;
+
+    --secondary: 0.95 0.02 80;
+    --secondary-foreground: 0.25 0.04 50;
+
+    --muted: 0.95 0.01 80;
+    --muted-foreground: 0.5 0.03 60;
+
+    /* Warm amber accent */
+    --accent: 0.92 0.05 80;
+    --accent-foreground: 0.25 0.04 50;
+
+    --destructive: 0.55 0.22 25;
+    --destructive-foreground: 1 0 0;
+
+    /* Success green */
+    --success: 0.6 0.15 145;
+    --success-foreground: 1 0 0;
+
+    --border: 0.9 0.02 80;
+    --input: 0.9 0.02 80;
+    --ring: 0.62 0.18 55;
+
+    /* Chart colors - food inspired */
+    --chart-1: 0.62 0.18 55;
+    --chart-2: 0.68 0.16 145;
+    --chart-3: 0.6 0.18 30;
+    --chart-4: 0.72 0.14 200;
+    --chart-5: 0.75 0.17 85;
+
+    /* Sidebar */
+    --sidebar: 0.18 0.03 45;
+    --sidebar-foreground: 0.95 0.01 80;
+    --sidebar-primary: 0.62 0.18 55;
+    --sidebar-primary-foreground: 1 0 0;
+    --sidebar-accent: 0.28 0.04 45;
+    --sidebar-accent-foreground: 0.95 0.01 80;
+    --sidebar-border: 0.3 0.04 45;
+    --sidebar-ring: 0.62 0.18 55;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: "Plus Jakarta Sans", "Outfit", system-ui, sans-serif;
+  }
+
+  h1, h2, h3, h4 {
+    font-family: "Cabinet Grotesk", "Plus Jakarta Sans", system-ui, sans-serif;
+    font-weight: 700;
+  }
+}
+
+/* Print styles for QR codes */
+@media print {
+  body > * {
+    display: none !important;
+  }
+  #print-qr {
+    display: flex !important;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: 100vw;
+    height: 100vh;
+    gap: 16px;
+  }
+  #print-qr * {
+    display: block !important;
+  }
+}
+
+#print-qr {
+  display: none;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: oklch(0.8 0.03 80);
+  border-radius: 9999px;
+}
+
+/* Category filter scrollbar hidden */
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.hide-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Cart badge pulse */
+@keyframes cart-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.15); }
+}
+.cart-pulse {
+  animation: cart-pulse 0.3s ease-in-out;
+}
+
+/* Kitchen status colors */
+.status-active {
+  background: oklch(0.95 0.06 55);
+  color: oklch(0.45 0.14 55);
+  border: 1px solid oklch(0.85 0.1 55);
+}
+.status-preparing {
+  background: oklch(0.95 0.05 80);
+  color: oklch(0.45 0.12 75);
+  border: 1px solid oklch(0.85 0.09 80);
+}
+.status-ready {
+  background: oklch(0.93 0.08 145);
+  color: oklch(0.42 0.15 145);
+  border: 1px solid oklch(0.82 0.12 145);
+}
+.status-delivered {
+  background: oklch(0.95 0.01 80);
+  color: oklch(0.5 0.03 60);
+  border: 1px solid oklch(0.88 0.02 80);
+}
+
+/* Floating cart animation */
+@keyframes slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(100%);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.slide-up {
+  animation: slide-up 0.3s ease-out;
+}
