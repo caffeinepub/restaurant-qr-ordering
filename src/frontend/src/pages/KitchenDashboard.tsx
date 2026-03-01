@@ -1,10 +1,17 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ChefHat, LogOut, RefreshCw } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { useActor } from "../hooks/useActor";
 import { useRestaurantStore } from "../restaurantDataStore";
 import { useSellerStore } from "../sellerStore";
+import type { Order } from "../types";
+import {
+  fetchOrdersFromBackend,
+  mergeOrders,
+  syncOrderToBackend,
+} from "../utils/orderSync";
 
 interface Props {
   restaurantId: string;
@@ -14,13 +21,64 @@ interface Props {
 type KitchenStatus = "pending" | "preparing" | "ready" | "delivered";
 
 export default function KitchenDashboard({ restaurantId, onLogout }: Props) {
-  const { orders, updateOrderKitchenStatus } = useRestaurantStore(restaurantId);
+  const { orders: localOrders, updateOrderKitchenStatus } =
+    useRestaurantStore(restaurantId);
+  const { actor } = useActor();
   const { restaurants } = useSellerStore();
   const restaurantInfo = restaurants.find((r) => r.id === restaurantId);
 
   const [filterStatus, setFilterStatus] = useState<KitchenStatus | "all">(
     "all",
   );
+  const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [backendOrders, setBackendOrders] = useState<Order[]>([]);
+  const actorRef = useRef(actor);
+  actorRef.current = actor;
+
+  // Poll ICP backend every 4 seconds for cross-device order sync
+  useEffect(() => {
+    async function poll() {
+      if (!actorRef.current) return;
+      const fetched = await fetchOrdersFromBackend(
+        actorRef.current,
+        restaurantId,
+      );
+      if (fetched.length > 0) {
+        setBackendOrders(fetched);
+        setLastUpdated(new Date());
+      }
+    }
+
+    // Initial fetch
+    poll();
+    const interval = setInterval(poll, 4000);
+    return () => clearInterval(interval);
+  }, [restaurantId]);
+
+  // Also update timestamp when local orders change
+  const orderCount = localOrders.length;
+  const latestOrderTime = localOrders[localOrders.length - 1]?.createdAt ?? 0;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: stable primitives derived from orders
+  useEffect(() => {
+    setLastUpdated(new Date());
+  }, [orderCount, latestOrderTime]);
+
+  // Merge local + backend orders (backend is authoritative for status)
+  const orders = mergeOrders(localOrders, backendOrders);
+
+  function handleManualRefresh() {
+    setIsRefreshing(true);
+    if (actorRef.current) {
+      fetchOrdersFromBackend(actorRef.current, restaurantId).then((fetched) => {
+        if (fetched.length > 0) setBackendOrders(fetched);
+        setLastUpdated(new Date());
+        setIsRefreshing(false);
+      });
+    } else {
+      window.location.reload();
+    }
+  }
 
   const activeOrders = orders.filter(
     (o) =>
@@ -78,9 +136,26 @@ export default function KitchenDashboard({ restaurantId, onLogout }: Props) {
             </p>
           </div>
           <div className="ml-auto flex items-center gap-2">
+            <div className="hidden sm:flex items-center gap-1.5 text-xs text-green-600 bg-green-50 px-2.5 py-1 rounded-full border border-green-200">
+              <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+              <span>Live</span>
+            </div>
             <Badge variant="secondary" className="hidden sm:flex">
               {activeOrders.length} active
             </Badge>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleManualRefresh}
+              className="gap-1.5"
+              title="Refresh orders"
+              disabled={isRefreshing}
+            >
+              <RefreshCw
+                className={`w-4 h-4 ${isRefreshing ? "animate-spin" : ""}`}
+              />
+              <span className="hidden sm:inline">Refresh</span>
+            </Button>
             <Button
               variant="ghost"
               size="sm"
@@ -115,6 +190,20 @@ export default function KitchenDashboard({ restaurantId, onLogout }: Props) {
           )}
         </div>
 
+        {/* Last updated */}
+        <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-4">
+          <RefreshCw className="w-3 h-3" />
+          <span>
+            Updated{" "}
+            {lastUpdated.toLocaleTimeString("en-IN", {
+              hour: "2-digit",
+              minute: "2-digit",
+              second: "2-digit",
+            })}{" "}
+            · auto-refreshes every 3s
+          </span>
+        </div>
+
         {/* Orders Grid */}
         {activeOrders.length === 0 ? (
           <div className="text-center py-20">
@@ -144,9 +233,8 @@ export default function KitchenDashboard({ restaurantId, onLogout }: Props) {
                       <h3 className="font-display font-bold text-xl text-foreground">
                         {order.tableNumber}
                       </h3>
-                      <p className="text-xs text-muted-foreground flex items-center gap-1">
-                        <RefreshCw className="w-3 h-3" />
-                        {timeElapsed}m ago
+                      <p className="text-xs text-muted-foreground">
+                        ⏱ {timeElapsed}m ago
                       </p>
                     </div>
                     <span
@@ -179,9 +267,30 @@ export default function KitchenDashboard({ restaurantId, onLogout }: Props) {
                       <Button
                         className="w-full h-9 text-sm font-semibold bg-primary hover:bg-primary/90 text-white"
                         onClick={() => {
-                          updateOrderKitchenStatus(order.id, config.next!);
+                          const nextStatus = config.next!;
+                          updateOrderKitchenStatus(order.id, nextStatus);
                           toast.success(
-                            `Order ${config.next} for ${order.tableNumber}`,
+                            `Order ${nextStatus} for ${order.tableNumber}`,
+                          );
+                          // Sync updated status to backend so billing sees it
+                          if (actorRef.current) {
+                            const updatedOrder: Order = {
+                              ...order,
+                              kitchenStatus: nextStatus,
+                            };
+                            syncOrderToBackend(
+                              actorRef.current,
+                              restaurantId,
+                              updatedOrder,
+                            );
+                          }
+                          // Optimistically update local backend state
+                          setBackendOrders((prev) =>
+                            prev.map((o) =>
+                              o.id === order.id
+                                ? { ...o, kitchenStatus: nextStatus }
+                                : o,
+                            ),
                           );
                         }}
                       >

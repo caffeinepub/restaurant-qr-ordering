@@ -12,9 +12,11 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import { useActor } from "../hooks/useActor";
 import { useRestaurantStore } from "../restaurantDataStore";
 import { useSellerStore } from "../sellerStore";
 import type { CartItem, MenuCategory, QRPayload } from "../types";
+import { syncOrderToBackend } from "../utils/orderSync";
 import {
   compactToQRPayload,
   decodeCompactMenu,
@@ -48,6 +50,7 @@ function CustomerMenuInner({ payload }: { payload: QRPayload }) {
   const { orders, placeOrder, addItemsToOrder } = useRestaurantStore(
     payload.restaurantId,
   );
+  const { actor } = useActor();
   const sellerRestaurants = useSellerStore((s) => s.restaurants);
 
   const restaurant = sellerRestaurants.find(
@@ -143,10 +146,38 @@ function CustomerMenuInner({ payload }: { payload: QRPayload }) {
       addItemsToOrder(activeOrder.id, cart);
       setPlacedOrderId(activeOrder.id);
       toast.success("Items added to your order!");
+      // Sync updated order to backend so kitchen/billing on other devices see it
+      if (actor) {
+        // Compute updated order items for sync (replicate addItemsToOrder logic)
+        const merged = [...activeOrder.items];
+        for (const newItem of cart) {
+          const existing = merged.findIndex(
+            (x) => x.menuItemId === newItem.menuItemId,
+          );
+          if (existing >= 0) {
+            merged[existing] = {
+              ...merged[existing],
+              quantity: merged[existing].quantity + newItem.quantity,
+            };
+          } else {
+            merged.push(newItem);
+          }
+        }
+        const updatedOrder = {
+          ...activeOrder,
+          items: merged,
+          kitchenStatus: "pending" as const,
+        };
+        syncOrderToBackend(actor, payload.restaurantId, updatedOrder);
+      }
     } else {
       const order = placeOrder(payload.tableId, payload.tableNumber, cart);
       setPlacedOrderId(order.id);
       toast.success("Order placed successfully!");
+      // Sync new order to backend so kitchen/billing on other devices see it
+      if (actor) {
+        syncOrderToBackend(actor, payload.restaurantId, order);
+      }
     }
     setCart([]);
     setCartOpen(false);

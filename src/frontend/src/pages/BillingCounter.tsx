@@ -1,12 +1,14 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import { CheckCircle, LogOut, Receipt, X } from "lucide-react";
-import { useState } from "react";
+import { CheckCircle, LogOut, Receipt, RefreshCw, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { useActor } from "../hooks/useActor";
 import { useRestaurantStore } from "../restaurantDataStore";
 import { useSellerStore } from "../sellerStore";
-import type { Bill } from "../types";
+import type { Bill, Order } from "../types";
+import { fetchOrdersFromBackend, mergeOrders } from "../utils/orderSync";
 
 interface Props {
   restaurantId: string;
@@ -14,8 +16,18 @@ interface Props {
 }
 
 export default function BillingCounter({ restaurantId, onLogout }: Props) {
-  const { tables, orders, bills, gstPercent, generateBill, processPayment } =
-    useRestaurantStore(restaurantId);
+  const {
+    tables,
+    orders: localOrders,
+    bills,
+    gstPercent,
+    generateBill,
+    processPayment,
+  } = useRestaurantStore(restaurantId);
+
+  const { actor } = useActor();
+  const actorRef = useRef(actor);
+  actorRef.current = actor;
 
   const { restaurants } = useSellerStore();
   const restaurantInfo = restaurants.find((r) => r.id === restaurantId);
@@ -23,6 +35,42 @@ export default function BillingCounter({ restaurantId, onLogout }: Props) {
   const [activeTab, setActiveTab] = useState<"tables" | "pending" | "paid">(
     "tables",
   );
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [backendOrders, setBackendOrders] = useState<Order[]>([]);
+
+  // Poll ICP backend every 5 seconds for cross-device order sync
+  useEffect(() => {
+    async function poll() {
+      if (!actorRef.current) return;
+      const fetched = await fetchOrdersFromBackend(
+        actorRef.current,
+        restaurantId,
+      );
+      if (fetched.length > 0) {
+        setBackendOrders(fetched);
+      }
+    }
+
+    poll();
+    const interval = setInterval(poll, 5000);
+    return () => clearInterval(interval);
+  }, [restaurantId]);
+
+  // Merge local + backend orders
+  const orders = mergeOrders(localOrders, backendOrders);
+
+  function handleManualRefresh() {
+    setIsRefreshing(true);
+    if (actorRef.current) {
+      fetchOrdersFromBackend(actorRef.current, restaurantId).then((fetched) => {
+        if (fetched.length > 0) setBackendOrders(fetched);
+        setIsRefreshing(false);
+      });
+    } else {
+      window.location.reload();
+    }
+  }
+
   const [selectedBill, setSelectedBill] = useState<Bill | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<
     "Cash" | "UPI" | "Card" | null
@@ -88,6 +136,23 @@ export default function BillingCounter({ restaurantId, onLogout }: Props) {
             </p>
           </div>
           <div className="ml-auto flex items-center gap-2">
+            <div className="hidden sm:flex items-center gap-1.5 text-xs text-green-600 bg-green-50 px-2.5 py-1 rounded-full border border-green-200">
+              <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+              <span>Live</span>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleManualRefresh}
+              className="gap-1.5"
+              title="Refresh"
+              disabled={isRefreshing}
+            >
+              <RefreshCw
+                className={`w-4 h-4 ${isRefreshing ? "animate-spin" : ""}`}
+              />
+              <span className="hidden sm:inline">Refresh</span>
+            </Button>
             <Button
               variant="ghost"
               size="sm"

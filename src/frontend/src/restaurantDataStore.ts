@@ -95,11 +95,35 @@ function getInitialRestaurantState(
   return defaults;
 }
 
+function syncFromStorage(
+  restaurantId: string,
+  store: StoreApi<RestaurantStore>,
+) {
+  try {
+    const raw = localStorage.getItem(`restaurant_data_${restaurantId}`);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    const state = parsed?.state;
+    if (!state) return;
+    store.setState((prev) => ({
+      ...prev,
+      menuItems: state.menuItems ?? prev.menuItems,
+      tables: state.tables ?? prev.tables,
+      orders: state.orders ?? prev.orders,
+      bills: state.bills ?? prev.bills,
+      gstPercent: state.gstPercent ?? prev.gstPercent,
+      _hasHydrated: true,
+    }));
+  } catch {
+    // ignore parse errors
+  }
+}
+
 function createRestaurantStore(
   restaurantId: string,
 ): StoreApi<RestaurantStore> {
   const _initialState = getInitialRestaurantState(restaurantId);
-  return create<RestaurantStore>()(
+  const store = create<RestaurantStore>()(
     persist(
       (set, get) => ({
         // Initial state loaded synchronously from localStorage
@@ -316,6 +340,50 @@ function createRestaurantStore(
       },
     ),
   );
+
+  // ── Cross-tab / cross-device synchronisation ──────────────────────────────
+  // 1. BroadcastChannel: notifies other tabs on the same origin instantly
+  let channel: BroadcastChannel | null = null;
+  try {
+    channel = new BroadcastChannel(`restaurant_sync_${restaurantId}`);
+    channel.onmessage = () => {
+      syncFromStorage(restaurantId, store);
+    };
+  } catch {
+    // BroadcastChannel not available in some environments
+  }
+
+  // 2. storage event: fires in OTHER tabs when localStorage key changes
+  const handleStorage = (e: StorageEvent) => {
+    if (e.key === `restaurant_data_${restaurantId}`) {
+      syncFromStorage(restaurantId, store);
+    }
+  };
+  if (typeof window !== "undefined") {
+    window.addEventListener("storage", handleStorage);
+  }
+
+  // 3. When THIS tab writes state, notify other tabs via BroadcastChannel
+  let broadcastTimeout: ReturnType<typeof setTimeout> | null = null;
+  store.subscribe(() => {
+    if (!channel) return;
+    // Debounce to avoid flooding on rapid state changes
+    if (broadcastTimeout) clearTimeout(broadcastTimeout);
+    broadcastTimeout = setTimeout(() => {
+      try {
+        channel!.postMessage("sync");
+      } catch {
+        // ignore
+      }
+    }, 50);
+  });
+
+  // 4. Polling safety net — re-read every 3 seconds in case events were missed
+  setInterval(() => {
+    syncFromStorage(restaurantId, store);
+  }, 3000);
+
+  return store;
 }
 
 export function getOrCreateStore(
