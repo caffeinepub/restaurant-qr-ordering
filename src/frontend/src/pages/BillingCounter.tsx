@@ -1,33 +1,25 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { CheckCircle, LogOut, Receipt, X } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { useRestaurantStore } from "../restaurantDataStore";
 import { useSellerStore } from "../sellerStore";
-import { useStore } from "../store";
 import type { Bill } from "../types";
 
 interface Props {
-  navigate: (page: "home" | "kitchen" | "billing" | "admin") => void;
+  restaurantId: string;
+  onLogout: () => void;
 }
 
-export default function BillingCounter({ navigate }: Props) {
-  const {
-    userRole,
-    login,
-    logout,
-    tables,
-    orders,
-    bills,
-    gstPercent,
-    generateBill,
-    processPayment,
-  } = useStore();
-  const { getActivePins } = useSellerStore();
-  const [pin, setPin] = useState("");
-  const [pinError, setPinError] = useState(false);
+export default function BillingCounter({ restaurantId, onLogout }: Props) {
+  const { tables, orders, bills, gstPercent, generateBill, processPayment } =
+    useRestaurantStore(restaurantId);
+
+  const { restaurants } = useSellerStore();
+  const restaurantInfo = restaurants.find((r) => r.id === restaurantId);
+
   const [activeTab, setActiveTab] = useState<"tables" | "pending" | "paid">(
     "tables",
   );
@@ -36,29 +28,6 @@ export default function BillingCounter({ navigate }: Props) {
     "Cash" | "UPI" | "Card" | null
   >(null);
   const [paymentSuccess, setPaymentSuccess] = useState(false);
-
-  const isAuthenticated = userRole === "billing" || userRole === "admin";
-
-  function handleLogin() {
-    const pins = getActivePins();
-    let role: "billing" | "admin" | undefined;
-    if (pin === pins.billing) role = "billing";
-    else if (pin === pins.admin) role = "admin";
-
-    if (role) {
-      login(role);
-      setPinError(false);
-      toast.success(`Logged in as ${role}`);
-    } else {
-      setPinError(true);
-      toast.error("Invalid PIN");
-    }
-  }
-
-  function handleLogout() {
-    logout();
-    setPin("");
-  }
 
   const occupiedTables = tables.filter((t) => t.isOccupied);
   const pendingBills = bills.filter((b) => !b.isPaid);
@@ -102,67 +71,6 @@ export default function BillingCounter({ navigate }: Props) {
     }, 2000);
   }
 
-  if (!isAuthenticated) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center p-4">
-        <div className="w-full max-w-sm">
-          <div className="text-center mb-8">
-            <div className="w-16 h-16 rounded-2xl bg-green-500 flex items-center justify-center mx-auto mb-4 shadow-lg">
-              <Receipt className="w-8 h-8 text-white" />
-            </div>
-            <h2 className="text-2xl font-display font-bold text-foreground">
-              Billing Counter
-            </h2>
-            <p className="text-muted-foreground text-sm mt-1">
-              Enter your PIN to continue
-            </p>
-          </div>
-          <div className="bg-white rounded-2xl border border-border shadow-card p-6 space-y-4">
-            <div className="text-xs text-muted-foreground text-center space-y-1">
-              <p>
-                Billing Staff PIN:{" "}
-                <span className="font-mono font-bold">5678</span>
-              </p>
-              <p>
-                Admin PIN: <span className="font-mono font-bold">0000</span>
-              </p>
-            </div>
-            <Input
-              type="password"
-              placeholder="Enter PIN"
-              value={pin}
-              onChange={(e) => {
-                setPin(e.target.value);
-                setPinError(false);
-              }}
-              onKeyDown={(e) => e.key === "Enter" && handleLogin()}
-              className={`text-center text-xl tracking-widest h-12 ${pinError ? "border-destructive" : ""}`}
-              maxLength={6}
-            />
-            {pinError && (
-              <p className="text-destructive text-xs text-center">
-                Invalid PIN. Please try again.
-              </p>
-            )}
-            <Button
-              className="w-full h-11 bg-green-500 hover:bg-green-600 text-white font-semibold"
-              onClick={handleLogin}
-            >
-              Login
-            </Button>
-            <Button
-              variant="ghost"
-              className="w-full"
-              onClick={() => navigate("home")}
-            >
-              ← Back to Home
-            </Button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
@@ -175,13 +83,15 @@ export default function BillingCounter({ navigate }: Props) {
             <h1 className="font-display font-bold text-foreground">
               Billing Counter
             </h1>
-            <p className="text-xs text-muted-foreground">Payment processing</p>
+            <p className="text-xs text-muted-foreground">
+              {restaurantInfo?.name ?? "Restaurant"}
+            </p>
           </div>
           <div className="ml-auto flex items-center gap-2">
             <Button
               variant="ghost"
               size="sm"
-              onClick={handleLogout}
+              onClick={onLogout}
               className="gap-1.5"
             >
               <LogOut className="w-4 h-4" />
@@ -218,88 +128,99 @@ export default function BillingCounter({ navigate }: Props) {
 
         {/* Active Tables */}
         {activeTab === "tables" && (
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {tables.map((table) => {
-              const order = table.currentOrderId
-                ? orders.find((o) => o.id === table.currentOrderId)
-                : null;
-              const subtotal = order
-                ? order.items.reduce((s, i) => s + i.price * i.quantity, 0)
-                : 0;
-              const existingBill = table.currentOrderId
-                ? bills.find(
-                    (b) => b.orderId === table.currentOrderId && !b.isPaid,
-                  )
-                : null;
+          <div>
+            {tables.length === 0 ? (
+              <div className="text-center py-16">
+                <div className="text-5xl mb-3">🪑</div>
+                <p className="text-muted-foreground">
+                  No tables added yet. Add tables in the Admin Panel.
+                </p>
+              </div>
+            ) : (
+              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {tables.map((table) => {
+                  const order = table.currentOrderId
+                    ? orders.find((o) => o.id === table.currentOrderId)
+                    : null;
+                  const subtotal = order
+                    ? order.items.reduce((s, i) => s + i.price * i.quantity, 0)
+                    : 0;
+                  const existingBill = table.currentOrderId
+                    ? bills.find(
+                        (b) => b.orderId === table.currentOrderId && !b.isPaid,
+                      )
+                    : null;
 
-              return (
-                <div
-                  key={table.id}
-                  className={`bg-white rounded-2xl border shadow-card overflow-hidden ${
-                    table.isOccupied ? "border-primary/30" : "border-border"
-                  }`}
-                >
-                  <div className="p-4 flex items-center justify-between border-b border-border">
-                    <h3 className="font-display font-bold text-lg text-foreground">
-                      {table.tableNumber}
-                    </h3>
-                    <Badge
-                      className={
-                        table.isOccupied
-                          ? "bg-primary/10 text-primary border-primary/20"
-                          : "bg-green-50 text-green-700 border-green-200"
-                      }
+                  return (
+                    <div
+                      key={table.id}
+                      className={`bg-white rounded-2xl border shadow-card overflow-hidden ${
+                        table.isOccupied ? "border-primary/30" : "border-border"
+                      }`}
                     >
-                      {table.isOccupied ? "Occupied" : "Available"}
-                    </Badge>
-                  </div>
-                  <div className="p-4">
-                    {table.isOccupied && order ? (
-                      <>
-                        <div className="space-y-1 mb-3">
-                          {order.items.slice(0, 3).map((item) => (
-                            <div
-                              key={item.menuItemId}
-                              className="flex justify-between text-xs text-muted-foreground"
-                            >
-                              <span>
-                                {item.name} × {item.quantity}
-                              </span>
-                              <span>₹{item.price * item.quantity}</span>
-                            </div>
-                          ))}
-                          {order.items.length > 3 && (
-                            <p className="text-xs text-muted-foreground">
-                              +{order.items.length - 3} more
-                            </p>
-                          )}
-                        </div>
-                        <div className="flex items-center justify-between mb-3">
-                          <span className="text-sm font-medium text-muted-foreground">
-                            Est. Total (incl. GST)
-                          </span>
-                          <span className="font-bold text-foreground">
-                            ₹
-                            {subtotal +
-                              Math.round(subtotal * (gstPercent / 100))}
-                          </span>
-                        </div>
-                        <Button
-                          className="w-full h-9 text-sm font-semibold bg-primary hover:bg-primary/90 text-white"
-                          onClick={() => handleGenerateBill(table.id)}
+                      <div className="p-4 flex items-center justify-between border-b border-border">
+                        <h3 className="font-display font-bold text-lg text-foreground">
+                          {table.tableNumber}
+                        </h3>
+                        <Badge
+                          className={
+                            table.isOccupied
+                              ? "bg-primary/10 text-primary border-primary/20"
+                              : "bg-green-50 text-green-700 border-green-200"
+                          }
                         >
-                          {existingBill ? "View Bill" : "Generate Bill"}
-                        </Button>
-                      </>
-                    ) : (
-                      <p className="text-sm text-muted-foreground text-center py-2">
-                        No active order
-                      </p>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
+                          {table.isOccupied ? "Occupied" : "Available"}
+                        </Badge>
+                      </div>
+                      <div className="p-4">
+                        {table.isOccupied && order ? (
+                          <>
+                            <div className="space-y-1 mb-3">
+                              {order.items.slice(0, 3).map((item) => (
+                                <div
+                                  key={item.menuItemId}
+                                  className="flex justify-between text-xs text-muted-foreground"
+                                >
+                                  <span>
+                                    {item.name} × {item.quantity}
+                                  </span>
+                                  <span>₹{item.price * item.quantity}</span>
+                                </div>
+                              ))}
+                              {order.items.length > 3 && (
+                                <p className="text-xs text-muted-foreground">
+                                  +{order.items.length - 3} more
+                                </p>
+                              )}
+                            </div>
+                            <div className="flex items-center justify-between mb-3">
+                              <span className="text-sm font-medium text-muted-foreground">
+                                Est. Total (incl. GST)
+                              </span>
+                              <span className="font-bold text-foreground">
+                                ₹
+                                {subtotal +
+                                  Math.round(subtotal * (gstPercent / 100))}
+                              </span>
+                            </div>
+                            <Button
+                              className="w-full h-9 text-sm font-semibold bg-primary hover:bg-primary/90 text-white"
+                              onClick={() => handleGenerateBill(table.id)}
+                            >
+                              {existingBill ? "View Bill" : "Generate Bill"}
+                            </Button>
+                          </>
+                        ) : (
+                          <p className="text-sm text-muted-foreground text-center py-2">
+                            No active order
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
 

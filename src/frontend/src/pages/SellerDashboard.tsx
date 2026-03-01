@@ -40,7 +40,13 @@ import { toast } from "sonner";
 import { DEFAULT_PINS, useSellerStore } from "../sellerStore";
 import type { Restaurant, RestaurantPins } from "../types";
 
-type PageView = "home" | "kitchen" | "billing" | "admin" | "seller";
+type PageView =
+  | "home"
+  | "kitchen"
+  | "billing"
+  | "admin"
+  | "seller"
+  | "restaurant-login";
 
 interface Props {
   navigate: (p: PageView) => void;

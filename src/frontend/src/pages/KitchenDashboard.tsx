@@ -1,50 +1,26 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { ChefHat, LogOut, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { useRestaurantStore } from "../restaurantDataStore";
 import { useSellerStore } from "../sellerStore";
-import { useStore } from "../store";
 
 interface Props {
-  navigate: (page: "home" | "kitchen" | "billing" | "admin") => void;
+  restaurantId: string;
+  onLogout: () => void;
 }
 
 type KitchenStatus = "pending" | "preparing" | "ready" | "delivered";
 
-export default function KitchenDashboard({ navigate }: Props) {
-  const { userRole, login, logout, orders, updateOrderKitchenStatus } =
-    useStore();
-  const { getActivePins } = useSellerStore();
-  const [pin, setPin] = useState("");
-  const [pinError, setPinError] = useState(false);
+export default function KitchenDashboard({ restaurantId, onLogout }: Props) {
+  const { orders, updateOrderKitchenStatus } = useRestaurantStore(restaurantId);
+  const { restaurants } = useSellerStore();
+  const restaurantInfo = restaurants.find((r) => r.id === restaurantId);
+
   const [filterStatus, setFilterStatus] = useState<KitchenStatus | "all">(
     "all",
   );
-
-  const isAuthenticated = userRole === "kitchen" || userRole === "admin";
-
-  function handleLogin() {
-    const pins = getActivePins();
-    let role: "kitchen" | "admin" | undefined;
-    if (pin === pins.kitchen) role = "kitchen";
-    else if (pin === pins.admin) role = "admin";
-
-    if (role) {
-      login(role);
-      setPinError(false);
-      toast.success(`Logged in as ${role}`);
-    } else {
-      setPinError(true);
-      toast.error("Invalid PIN");
-    }
-  }
-
-  function handleLogout() {
-    logout();
-    setPin("");
-  }
 
   const activeOrders = orders.filter(
     (o) =>
@@ -85,67 +61,6 @@ export default function KitchenDashboard({ navigate }: Props) {
     },
   };
 
-  if (!isAuthenticated) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center p-4">
-        <div className="w-full max-w-sm">
-          <div className="text-center mb-8">
-            <div className="w-16 h-16 rounded-2xl bg-orange-500 flex items-center justify-center mx-auto mb-4 shadow-primary">
-              <ChefHat className="w-8 h-8 text-white" />
-            </div>
-            <h2 className="text-2xl font-display font-bold text-foreground">
-              Kitchen Dashboard
-            </h2>
-            <p className="text-muted-foreground text-sm mt-1">
-              Enter your PIN to continue
-            </p>
-          </div>
-          <div className="bg-white rounded-2xl border border-border shadow-card p-6 space-y-4">
-            <div className="text-xs text-muted-foreground text-center space-y-1">
-              <p>
-                Kitchen Staff PIN:{" "}
-                <span className="font-mono font-bold">1234</span>
-              </p>
-              <p>
-                Admin PIN: <span className="font-mono font-bold">0000</span>
-              </p>
-            </div>
-            <Input
-              type="password"
-              placeholder="Enter PIN"
-              value={pin}
-              onChange={(e) => {
-                setPin(e.target.value);
-                setPinError(false);
-              }}
-              onKeyDown={(e) => e.key === "Enter" && handleLogin()}
-              className={`text-center text-xl tracking-widest h-12 ${pinError ? "border-destructive" : ""}`}
-              maxLength={6}
-            />
-            {pinError && (
-              <p className="text-destructive text-xs text-center">
-                Invalid PIN. Please try again.
-              </p>
-            )}
-            <Button
-              className="w-full h-11 bg-primary hover:bg-primary/90 text-white font-semibold"
-              onClick={handleLogin}
-            >
-              Login
-            </Button>
-            <Button
-              variant="ghost"
-              className="w-full"
-              onClick={() => navigate("home")}
-            >
-              ← Back to Home
-            </Button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
@@ -159,7 +74,7 @@ export default function KitchenDashboard({ navigate }: Props) {
               Kitchen Dashboard
             </h1>
             <p className="text-xs text-muted-foreground">
-              Real-time order management
+              {restaurantInfo?.name ?? "Restaurant"}
             </p>
           </div>
           <div className="ml-auto flex items-center gap-2">
@@ -169,7 +84,7 @@ export default function KitchenDashboard({ navigate }: Props) {
             <Button
               variant="ghost"
               size="sm"
-              onClick={handleLogout}
+              onClick={onLogout}
               className="gap-1.5"
             >
               <LogOut className="w-4 h-4" />

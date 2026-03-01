@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import {
   CheckCircle,
+  Loader2,
   Minus,
   Plus,
   ShoppingCart,
@@ -10,14 +11,15 @@ import {
   WifiOff,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import { useRestaurantStore } from "../restaurantDataStore";
 import { useSellerStore } from "../sellerStore";
-import { useStore } from "../store";
 import type { CartItem, MenuCategory } from "../types";
 
 interface Props {
   token: string;
+  restaurantId: string;
 }
 
 type CustomerView = "menu" | "confirmation" | "options";
@@ -31,27 +33,56 @@ const CATEGORIES: MenuCategory[] = [
 const ALL_CATEGORIES = ["All", ...CATEGORIES] as const;
 type FilterCategory = (typeof ALL_CATEGORIES)[number];
 
-export default function CustomerMenu({ token }: Props) {
+export default function CustomerMenu({ token, restaurantId }: Props) {
   const { tables, menuItems, orders, gstPercent, placeOrder, addItemsToOrder } =
-    useStore();
-  const { appSuspended } = useSellerStore();
+    useRestaurantStore(restaurantId);
+
+  // Access full seller store including hydration status
+  const sellerRestaurants = useSellerStore((s) => s.restaurants);
+  const sellerHydrated = useSellerStore((s) => s._hasHydrated);
+
+  const restaurant = sellerRestaurants.find((r) => r.id === restaurantId);
+  const isSuspended = restaurant ? !restaurant.isActive : false;
+
   const [activeCategory, setActiveCategory] = useState<FilterCategory>("All");
   const [cart, setCart] = useState<CartItem[]>([]);
   const [cartOpen, setCartOpen] = useState(false);
   const [view, setView] = useState<CustomerView>("menu");
   const [placedOrderId, setPlacedOrderId] = useState<string | null>(null);
   const [addingMore, setAddingMore] = useState(false);
+  // Track whether initial view has been determined (to avoid flicker)
+  const initialViewSet = useRef(false);
+  // Grace period: even if stores report hydrated, wait a tick before showing
+  // "Restaurant Not Found" — handles async rehydration edge cases
+  const [readyToShowError, setReadyToShowError] = useState(false);
 
   const table = tables.find((t) => t.sessionToken === token);
   const activeOrder = table?.currentOrderId
     ? orders.find((o) => o.id === table.currentOrderId && o.status === "active")
     : null;
 
+  // On first load after hydration, determine initial view:
+  // - If active order exists → show "options" (second scan flow)
+  // - Otherwise → show "menu" (first scan flow)
   useEffect(() => {
-    if (table && activeOrder && view === "menu" && !addingMore) {
-      setView("options");
+    if (!initialViewSet.current && table) {
+      initialViewSet.current = true;
+      if (activeOrder) {
+        setView("options");
+      } else {
+        setView("menu");
+      }
     }
-  }, [table, activeOrder, view, addingMore]);
+  }, [table, activeOrder]);
+
+  // Grace period: once seller store is hydrated, wait 800ms before allowing
+  // the "Restaurant Not Found" error to show — guards against async rehydration
+  useEffect(() => {
+    if (sellerHydrated) {
+      const timer = setTimeout(() => setReadyToShowError(true), 800);
+      return () => clearTimeout(timer);
+    }
+  }, [sellerHydrated]);
 
   const filteredItems = useMemo(
     () =>
@@ -123,8 +154,39 @@ export default function CustomerMenu({ token }: Props) {
     setView("confirmation");
   }
 
+  // Show loading spinner while Zustand is hydrating from localStorage,
+  // OR while the grace period hasn't elapsed yet (prevents false "Not Found")
+  if (!sellerHydrated || (!restaurant && !readyToShowError)) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center p-4">
+        <div className="text-center max-w-sm">
+          <Loader2 className="w-10 h-10 text-primary animate-spin mx-auto mb-4" />
+          <p className="text-muted-foreground">Loading menu...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Invalid QR (restaurant not found in seller records, after full grace period)
+  if (!restaurant) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center p-4">
+        <div className="text-center max-w-sm">
+          <div className="text-6xl mb-4">⚠️</div>
+          <h2 className="text-2xl font-display font-bold text-foreground mb-2">
+            Restaurant Not Found
+          </h2>
+          <p className="text-muted-foreground">
+            This QR code does not match any registered restaurant. Please ask
+            staff for a new QR code.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   // Service suspended screen
-  if (appSuspended) {
+  if (isSuspended) {
     return (
       <div className="min-h-screen bg-gray-950 flex items-center justify-center p-4">
         <div className="text-center max-w-sm">
@@ -144,17 +206,18 @@ export default function CustomerMenu({ token }: Props) {
     );
   }
 
+  // Table not found — token may be stale (e.g. QR regenerated after payment)
   if (!table) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-4">
         <div className="text-center max-w-sm">
-          <div className="text-6xl mb-4">❌</div>
+          <div className="text-6xl mb-4">⚠️</div>
           <h2 className="text-2xl font-display font-bold text-foreground mb-2">
-            Invalid QR Code
+            QR Code Expired
           </h2>
           <p className="text-muted-foreground">
-            This QR code is no longer valid. Please scan the QR code on your
-            table.
+            This QR code has expired or been reset. Please ask staff for the
+            latest QR code for your table.
           </p>
         </div>
       </div>
@@ -172,6 +235,9 @@ export default function CustomerMenu({ token }: Props) {
           <h2 className="text-2xl font-display font-bold text-foreground mb-1">
             {table.tableNumber}
           </h2>
+          <p className="text-sm text-muted-foreground mb-0.5">
+            {restaurant.name}
+          </p>
           <p className="text-muted-foreground mb-8">
             You have an active order at this table
           </p>
@@ -238,7 +304,7 @@ export default function CustomerMenu({ token }: Props) {
             </div>
             <div>
               <h1 className="font-display font-bold text-foreground">
-                Restaurant
+                {restaurant.name}
               </h1>
             </div>
             <Badge variant="secondary" className="ml-auto text-xs">
@@ -338,7 +404,7 @@ export default function CustomerMenu({ token }: Props) {
           </div>
           <div>
             <h1 className="font-display font-bold text-foreground leading-tight">
-              Restaurant
+              {restaurant.name}
             </h1>
             <p className="text-xs text-muted-foreground">Digital Menu</p>
           </div>

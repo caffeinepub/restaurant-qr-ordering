@@ -15,12 +15,15 @@ interface SellerState {
   appSuspended: boolean;
   /** The restaurant currently selected/active in the app (used for PIN lookup) */
   activeRestaurantId: string | null;
+  /** True once Zustand has finished loading from localStorage */
+  _hasHydrated: boolean;
 }
 
 interface SellerStore extends SellerState {
   sellerLogin: () => void;
   sellerLogout: () => void;
   setActiveRestaurant: (id: string | null) => void;
+  setHasHydrated: (v: boolean) => void;
   addRestaurant: (data: {
     name: string;
     ownerName: string;
@@ -31,6 +34,7 @@ interface SellerStore extends SellerState {
   renewSubscription: (id: string) => void;
   updateRestaurantPins: (id: string, pins: Partial<RestaurantPins>) => void;
   getActivePins: () => RestaurantPins;
+  getActivePinsForRestaurant: (id: string) => RestaurantPins;
 }
 
 export const useSellerStore = create<SellerStore>()(
@@ -40,6 +44,8 @@ export const useSellerStore = create<SellerStore>()(
       isSellerAuthenticated: false,
       appSuspended: false,
       activeRestaurantId: null,
+      _hasHydrated: false,
+      setHasHydrated: (v) => set({ _hasHydrated: v }),
 
       sellerLogin: () => set({ isSellerAuthenticated: true }),
       sellerLogout: () => set({ isSellerAuthenticated: false }),
@@ -50,6 +56,13 @@ export const useSellerStore = create<SellerStore>()(
         const active = restaurants.find((r) => r.id === activeRestaurantId);
         if (!active?.pins) return DEFAULT_PINS;
         return { ...DEFAULT_PINS, ...active.pins };
+      },
+
+      getActivePinsForRestaurant: (id: string) => {
+        const { restaurants } = get();
+        const r = restaurants.find((r) => r.id === id);
+        if (!r?.pins) return DEFAULT_PINS;
+        return { ...DEFAULT_PINS, ...r.pins };
       },
 
       addRestaurant: (data) => {
@@ -139,6 +152,11 @@ export const useSellerStore = create<SellerStore>()(
     }),
     {
       name: "restaurant_seller_state",
+      onRehydrateStorage: () => (state) => {
+        if (state) {
+          state.setHasHydrated(true);
+        }
+      },
     },
   ),
 );
