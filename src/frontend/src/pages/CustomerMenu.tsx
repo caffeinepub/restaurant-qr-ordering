@@ -634,12 +634,12 @@ function LegacyQRLoader({ qrParam }: { qrParam: string }) {
 }
 
 /**
- * CompactQRLoader — Primary QR loader for ?r=ID&t=ID&tn=NAME&d=MENU_BASE64 URLs.
+ * CompactQRLoader — Loads menu for ?r=ID&t=ID&tn=NAME QR URLs.
  *
- * Load order:
- * 1. Decode menu from the ?d= URL param (embedded at QR generation time) — works on ANY device instantly
- * 2. Fall back to localStorage snapshot (same browser, admin device)
- * 3. Try ICP canister as last resort
+ * Load order (guaranteed to work cross-device, no auth required):
+ * 1. ICP canister getMenuSnapshot (primary — no auth, works on any phone)
+ * 2. localStorage snapshot (fallback — same browser as admin device)
+ * 3. ?d= URL param (legacy fallback for old QR codes with embedded menu)
  * 4. Show error only if all three fail
  */
 function CompactQRLoader({
@@ -654,64 +654,41 @@ function CompactQRLoader({
   menuData?: string;
 }) {
   const tn = tableNumberProp || "Table";
-
-  // STEP 1: Decode from the ?d= param immediately (synchronous, no network needed)
-  const [payload, setPayload] = useState<QRPayload | null>(() => {
-    if (menuData) {
-      const decoded = decodeMenuFromQR(menuData, restaurantId, tableId, tn);
-      if (decoded) return decoded;
-    }
-    return null;
-  });
-
-  const [loading, setLoading] = useState(!payload); // only show spinner if step 1 failed
+  const [payload, setPayload] = useState<QRPayload | null>(null);
+  const [loading, setLoading] = useState(true);
   const { actor } = useActor();
   const actorRef = useRef(actor);
   actorRef.current = actor;
 
   useEffect(() => {
-    // Already loaded from URL param — nothing more to do
-    if (payload) return;
-
     let cancelled = false;
 
-    async function loadMenuFallback() {
-      // STEP 2: localStorage snapshot (same browser where admin logged in)
-      const snapshot = loadMenuSnapshot(restaurantId);
-      if (snapshot) {
-        if (!cancelled) {
-          setPayload({
-            restaurantId,
-            restaurantName: snapshot.restaurantName,
-            tableId,
-            tableNumber: tn,
-            sessionToken: tableId,
-            gstPercent: snapshot.gstPercent,
-            menuItems: snapshot.menuItems.filter((i) => i.isAvailable),
-          });
-          setLoading(false);
-        }
-        return;
+    async function loadMenu() {
+      // Helper to build payload from a snapshot
+      function buildPayload(snapshot: {
+        restaurantName: string;
+        gstPercent: number;
+        menuItems: MenuItem[];
+      }): QRPayload {
+        return {
+          restaurantId,
+          restaurantName: snapshot.restaurantName,
+          tableId,
+          tableNumber: tn,
+          sessionToken: tableId,
+          gstPercent: snapshot.gstPercent,
+          menuItems: snapshot.menuItems.filter((i) => i.isAvailable),
+        };
       }
 
-      // STEP 3: ICP canister (last resort — requires network + may need auth)
-      const tryCanister = async (actorInstance: typeof actor) => {
-        if (!actorInstance) return false;
+      // STEP 1: Try ICP canister — no auth required, works on any device
+      const tryCanister = async () => {
+        const currentActor = actorRef.current;
+        if (!currentActor) return false;
         try {
-          const remote = await fetchMenuFromBackend(
-            actorInstance,
-            restaurantId,
-          );
+          const remote = await fetchMenuFromBackend(currentActor, restaurantId);
           if (remote && !cancelled) {
-            setPayload({
-              restaurantId,
-              restaurantName: remote.restaurantName,
-              tableId,
-              tableNumber: tn,
-              sessionToken: tableId,
-              gstPercent: remote.gstPercent,
-              menuItems: remote.menuItems.filter((i) => i.isAvailable),
-            });
+            setPayload(buildPayload(remote));
             setLoading(false);
             return true;
           }
@@ -721,25 +698,50 @@ function CompactQRLoader({
         return false;
       };
 
-      const currentActor = actorRef.current;
-      if (currentActor) {
-        const ok = await tryCanister(currentActor);
-        if (ok) return;
-      } else {
-        // Actor not ready — wait for it
-        await new Promise<void>((resolve) => setTimeout(resolve, 2000));
-        if (cancelled) return;
-        await tryCanister(actorRef.current);
+      // Wait for actor to be ready (it initialises asynchronously)
+      let actorReady = !!actorRef.current;
+      if (!actorReady) {
+        // Wait up to 3 seconds for actor
+        for (let i = 0; i < 6 && !actorRef.current; i++) {
+          await new Promise<void>((r) => setTimeout(r, 500));
+        }
+        actorReady = !!actorRef.current;
       }
 
+      if (!cancelled && actorReady) {
+        const ok = await tryCanister();
+        if (ok) return;
+      }
+
+      if (cancelled) return;
+
+      // STEP 2: localStorage snapshot (same browser where admin logged in)
+      const snapshot = loadMenuSnapshot(restaurantId);
+      if (snapshot && !cancelled) {
+        setPayload(buildPayload(snapshot));
+        setLoading(false);
+        return;
+      }
+
+      // STEP 3: Legacy ?d= URL param (old QR codes with embedded menu)
+      if (menuData && !cancelled) {
+        const decoded = decodeMenuFromQR(menuData, restaurantId, tableId, tn);
+        if (decoded) {
+          setPayload(decoded);
+          setLoading(false);
+          return;
+        }
+      }
+
+      // All methods failed
       if (!cancelled) setLoading(false);
     }
 
-    loadMenuFallback();
+    loadMenu();
     return () => {
       cancelled = true;
     };
-  }, [restaurantId, tableId, tn, payload]);
+  }, [restaurantId, tableId, tn, menuData]);
 
   if (loading) {
     return (
@@ -761,9 +763,9 @@ function CompactQRLoader({
             Menu Not Available
           </h2>
           <p className="text-muted-foreground text-sm leading-relaxed">
-            The menu could not be loaded. Please ask a staff member to open the
-            Admin Panel, go to <strong>Tables &amp; QR</strong>, and reprint the
-            QR codes — then scan the new QR code.
+            The menu could not be loaded. Please ask the restaurant staff to
+            open their <strong>Admin Panel</strong> once — this saves the menu
+            to the cloud. Then scan the QR code again.
           </p>
         </div>
       </div>

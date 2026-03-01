@@ -11,6 +11,7 @@ import {
   fetchOrdersFromBackend,
   mergeOrders,
   syncOrderToBackend,
+  updateOrderStatusOnBackend,
 } from "../utils/orderSync";
 
 interface Props {
@@ -37,23 +38,34 @@ export default function KitchenDashboard({ restaurantId, onLogout }: Props) {
   actorRef.current = actor;
 
   // Poll ICP backend every 4 seconds for cross-device order sync
+  // getRestaurantOrders requires NO authentication — works on any device
   useEffect(() => {
+    let cancelled = false;
+
     async function poll() {
-      if (!actorRef.current) return;
-      const fetched = await fetchOrdersFromBackend(
-        actorRef.current,
-        restaurantId,
-      );
-      if (fetched.length > 0) {
-        setBackendOrders(fetched);
-        setLastUpdated(new Date());
+      const currentActor = actorRef.current;
+      if (!currentActor) return;
+      try {
+        const fetched = await fetchOrdersFromBackend(
+          currentActor,
+          restaurantId,
+        );
+        if (!cancelled) {
+          setBackendOrders(fetched);
+          setLastUpdated(new Date());
+        }
+      } catch {
+        // non-fatal
       }
     }
 
-    // Initial fetch
+    // Initial fetch immediately
     poll();
     const interval = setInterval(poll, 4000);
-    return () => clearInterval(interval);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, [restaurantId]);
 
   // Also update timestamp when local orders change
@@ -69,14 +81,16 @@ export default function KitchenDashboard({ restaurantId, onLogout }: Props) {
 
   function handleManualRefresh() {
     setIsRefreshing(true);
-    if (actorRef.current) {
-      fetchOrdersFromBackend(actorRef.current, restaurantId).then((fetched) => {
-        if (fetched.length > 0) setBackendOrders(fetched);
+    const currentActor = actorRef.current;
+    if (currentActor) {
+      fetchOrdersFromBackend(currentActor, restaurantId).then((fetched) => {
+        setBackendOrders(fetched);
         setLastUpdated(new Date());
         setIsRefreshing(false);
       });
     } else {
-      window.location.reload();
+      setIsRefreshing(false);
+      toast.info("Refreshed");
     }
   }
 
@@ -118,6 +132,35 @@ export default function KitchenDashboard({ restaurantId, onLogout }: Props) {
       className: "status-delivered",
     },
   };
+
+  async function handleStatusUpdate(order: Order, nextStatus: KitchenStatus) {
+    // 1. Update local store immediately (optimistic)
+    updateOrderKitchenStatus(order.id, nextStatus);
+
+    // 2. Optimistically update backend orders display
+    setBackendOrders((prev) =>
+      prev.map((o) =>
+        o.id === order.id ? { ...o, kitchenStatus: nextStatus } : o,
+      ),
+    );
+
+    toast.success(`${order.tableNumber} — ${nextStatus}`);
+
+    // 3. Push status update to backend (no auth required)
+    const currentActor = actorRef.current;
+    if (currentActor) {
+      const updatedOrder: Order = { ...order, kitchenStatus: nextStatus };
+      // Use dedicated status update endpoint
+      await updateOrderStatusOnBackend(
+        currentActor,
+        order.id,
+        nextStatus,
+        order.status,
+      );
+      // Also sync full order so billing sees updated data
+      await syncOrderToBackend(currentActor, restaurantId, updatedOrder);
+    }
+  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -200,7 +243,7 @@ export default function KitchenDashboard({ restaurantId, onLogout }: Props) {
               minute: "2-digit",
               second: "2-digit",
             })}{" "}
-            · auto-refreshes every 3s
+            · auto-refreshes every 4s
           </span>
         </div>
 
@@ -212,7 +255,7 @@ export default function KitchenDashboard({ restaurantId, onLogout }: Props) {
               Kitchen is Clear!
             </h3>
             <p className="text-muted-foreground">
-              No active orders right now. Enjoy the break!
+              No active orders right now. Waiting for new orders...
             </p>
           </div>
         ) : (
@@ -266,33 +309,7 @@ export default function KitchenDashboard({ restaurantId, onLogout }: Props) {
                     <div className="px-4 pb-4">
                       <Button
                         className="w-full h-9 text-sm font-semibold bg-primary hover:bg-primary/90 text-white"
-                        onClick={() => {
-                          const nextStatus = config.next!;
-                          updateOrderKitchenStatus(order.id, nextStatus);
-                          toast.success(
-                            `Order ${nextStatus} for ${order.tableNumber}`,
-                          );
-                          // Sync updated status to backend so billing sees it
-                          if (actorRef.current) {
-                            const updatedOrder: Order = {
-                              ...order,
-                              kitchenStatus: nextStatus,
-                            };
-                            syncOrderToBackend(
-                              actorRef.current,
-                              restaurantId,
-                              updatedOrder,
-                            );
-                          }
-                          // Optimistically update local backend state
-                          setBackendOrders((prev) =>
-                            prev.map((o) =>
-                              o.id === order.id
-                                ? { ...o, kitchenStatus: nextStatus }
-                                : o,
-                            ),
-                          );
-                        }}
+                        onClick={() => handleStatusUpdate(order, config.next!)}
                       >
                         {config.nextLabel}
                       </Button>

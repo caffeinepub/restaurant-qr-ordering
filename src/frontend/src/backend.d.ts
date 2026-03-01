@@ -56,6 +56,22 @@ export interface RestorationProject {
     clientContact: ContactInfo;
     assignedEmployee?: string;
 }
+export interface RestaurantOrder {
+    id: string;
+    status: string;
+    kitchenStatus: string;
+    createdAt: bigint;
+    tableId: string;
+    tableNumber: string;
+    restaurantId: string;
+    updatedAt: bigint;
+    itemsJson: string;
+}
+export interface MenuSnapshot {
+    menuJson: string;
+    restaurantId: string;
+    timestamp: bigint;
+}
 export interface CleaningAppointment {
     id: string;
     status: CleaningStatus;
@@ -82,6 +98,11 @@ export interface Employee {
     role: Role;
 }
 export interface ContactInfo {
+    email: string;
+    phone: string;
+}
+export interface UserProfile {
+    name: string;
     email: string;
     phone: string;
 }
@@ -125,13 +146,23 @@ export interface backendInterface {
     getAllRestorationProjects(): Promise<Array<RestorationProject>>;
     getAllSales(): Promise<Array<SaleTransaction>>;
     getAllWorkshopActivities(): Promise<Array<WorkshopActivity>>;
+    getCallerUserProfile(): Promise<UserProfile | null>;
     getCallerUserRole(): Promise<UserRole>;
     getCleaningAppointment(id: string): Promise<CleaningAppointment | null>;
     getEmployee(id: string): Promise<Employee | null>;
+    getMenuSnapshot(restaurantId: string): Promise<MenuSnapshot | null>;
+    getRestaurantOrderHistory(orderId: string): Promise<Array<RestaurantOrder> | null>;
+    getRestaurantOrders(restaurantId: string): Promise<Array<RestaurantOrder>>;
+    getRestaurantOrdersByStatus(restaurantId: string, status: string): Promise<Array<RestaurantOrder>>;
     getRestorationProject(id: string): Promise<RestorationProject | null>;
     getSale(id: string): Promise<SaleTransaction | null>;
+    getUserProfile(user: Principal): Promise<UserProfile | null>;
     getWorkshopActivity(id: string): Promise<WorkshopActivity | null>;
     isCallerAdmin(): Promise<boolean>;
+    saveCallerUserProfile(profile: UserProfile): Promise<void>;
+    saveMenuSnapshot(restaurantId: string, menuJson: string): Promise<void>;
+    searchRestaurantOrders(restaurantId: string, searchTerm: string): Promise<Array<RestaurantOrder>>;
+    submitRestaurantOrder(order: RestaurantOrder): Promise<void>;
+    updateRestaurantOrderStatus(orderId: string, kitchenStatus: string, orderStatus: string): Promise<boolean>;
     uploadFile(metadata: string, file: ExternalBlob): Promise<void>;
-    validateAdminOrRole(caller: Principal, requiredRole: Role): Promise<void>;
 }

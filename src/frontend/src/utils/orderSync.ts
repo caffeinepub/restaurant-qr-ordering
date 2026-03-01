@@ -1,35 +1,61 @@
 /**
  * orderSync.ts — Cross-device order synchronisation via ICP backend.
  *
- * The ICP canister's addSale / getAllSales methods serve as a shared key-value
- * store. Orders are encoded as SaleTransaction records:
+ * Uses the new anonymous-accessible restaurant order endpoints:
+ *   submitRestaurantOrder  — customer phones call this (no auth needed)
+ *   getRestaurantOrders    — kitchen/billing polls this (no auth needed)
+ *   updateRestaurantOrderStatus — kitchen updates status (no auth needed)
  *
- *   id          = "RO_{restaurantId}_{orderId}"
- *   item        = JSON.stringify(order)
- *   customerContact.email = restaurantId  (used for filtering)
- *   customerContact.phone = orderId
- *   quantity    = 1n
- *   price       = 0n
- *   timestamp   = Date.now() * 1_000_000n  (nanoseconds)
- *
- * "RO_" prefix separates restaurant orders from any real sales data.
+ * The old addSale/getAllSales approach required #sales role and failed for
+ * anonymous customers. These new endpoints have no role requirement.
  */
 
-import type { backendInterface } from "../backend.d";
-import type { Order } from "../types";
+import type {
+  RestaurantOrder as BackendOrder,
+  backendInterface,
+} from "../backend.d";
+import type { CartItem, Order } from "../types";
 
 type Actor = backendInterface;
 
-/** Prefix used to distinguish restaurant orders from real sale records. */
-const ORDER_PREFIX = "RO_";
+/** Convert a frontend Order to the backend RestaurantOrder format */
+function toBackendOrder(restaurantId: string, order: Order): BackendOrder {
+  return {
+    id: order.id,
+    restaurantId,
+    tableId: order.tableId,
+    tableNumber: order.tableNumber,
+    itemsJson: JSON.stringify(order.items),
+    status: order.status,
+    kitchenStatus: order.kitchenStatus,
+    createdAt: BigInt(order.createdAt),
+    updatedAt: BigInt(Date.now()),
+  };
+}
 
-function makeId(restaurantId: string, orderId: string): string {
-  return `${ORDER_PREFIX}${restaurantId}_${orderId}`;
+/** Convert a backend RestaurantOrder to the frontend Order format */
+function fromBackendOrder(backendOrder: BackendOrder): Order {
+  let items: CartItem[] = [];
+  try {
+    items = JSON.parse(backendOrder.itemsJson) as CartItem[];
+  } catch {
+    items = [];
+  }
+  return {
+    id: backendOrder.id,
+    tableId: backendOrder.tableId,
+    tableNumber: backendOrder.tableNumber,
+    items,
+    status: backendOrder.status as Order["status"],
+    kitchenStatus: backendOrder.kitchenStatus as Order["kitchenStatus"],
+    createdAt: Number(backendOrder.createdAt),
+  };
 }
 
 /**
  * Publish (or update) a single order to the ICP backend.
  * Non-fatal — if the call fails, the order still lives in localStorage.
+ * Uses submitRestaurantOrder which requires NO authentication.
  */
 export async function syncOrderToBackend(
   actor: Actor,
@@ -37,17 +63,7 @@ export async function syncOrderToBackend(
   order: Order,
 ): Promise<void> {
   try {
-    await actor.addSale({
-      id: makeId(restaurantId, order.id),
-      item: JSON.stringify(order),
-      customerContact: {
-        email: restaurantId,
-        phone: order.id,
-      },
-      quantity: BigInt(1),
-      price: BigInt(0),
-      timestamp: BigInt(Date.now()) * BigInt(1_000_000),
-    });
+    await actor.submitRestaurantOrder(toBackendOrder(restaurantId, order));
   } catch (err) {
     console.warn("[orderSync] syncOrderToBackend failed (non-fatal):", err);
   }
@@ -56,29 +72,43 @@ export async function syncOrderToBackend(
 /**
  * Fetch all orders for a restaurant from the ICP backend.
  * Returns an empty array on error.
+ * Uses getRestaurantOrders which requires NO authentication.
  */
 export async function fetchOrdersFromBackend(
   actor: Actor,
   restaurantId: string,
 ): Promise<Order[]> {
   try {
-    const sales = await actor.getAllSales();
-    const orders: Order[] = [];
-    for (const sale of sales) {
-      if (!sale.id.startsWith(`${ORDER_PREFIX}${restaurantId}_`)) continue;
-      try {
-        const order = JSON.parse(sale.item) as Order;
-        if (order && typeof order.id === "string") {
-          orders.push(order);
-        }
-      } catch {
-        // skip malformed records
-      }
-    }
-    return orders;
+    const backendOrders = await actor.getRestaurantOrders(restaurantId);
+    return backendOrders.map(fromBackendOrder);
   } catch (err) {
     console.warn("[orderSync] fetchOrdersFromBackend failed (non-fatal):", err);
     return [];
+  }
+}
+
+/**
+ * Update the kitchen/order status of an order on the backend.
+ * Kitchen uses this to mark orders as preparing/ready/delivered.
+ * Uses updateRestaurantOrderStatus which requires NO authentication.
+ */
+export async function updateOrderStatusOnBackend(
+  actor: Actor,
+  orderId: string,
+  kitchenStatus: string,
+  orderStatus: string,
+): Promise<void> {
+  try {
+    await actor.updateRestaurantOrderStatus(
+      orderId,
+      kitchenStatus,
+      orderStatus,
+    );
+  } catch (err) {
+    console.warn(
+      "[orderSync] updateOrderStatusOnBackend failed (non-fatal):",
+      err,
+    );
   }
 }
 
@@ -100,12 +130,10 @@ export function mergeOrders(
   const merged = localOrders.map((local) => {
     const remote = backendMap.get(local.id);
     if (!remote) return local;
-    // Prefer whichever has a more recent createdAt, or merge kitchenStatus
-    // from backend (kitchen updates are more authoritative)
+    // Prefer backend for status fields (kitchen updates are authoritative)
     return {
       ...local,
       ...remote,
-      // Always keep the latest kitchenStatus from backend
       kitchenStatus: remote.kitchenStatus,
       status: remote.status,
     };

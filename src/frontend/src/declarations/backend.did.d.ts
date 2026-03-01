@@ -32,10 +32,26 @@ export interface Employee {
   'role' : Role,
 }
 export type ExternalBlob = Uint8Array;
+export interface MenuSnapshot {
+  'menuJson' : string,
+  'restaurantId' : string,
+  'timestamp' : bigint,
+}
 export interface Participant {
   'contactInfo' : ContactInfo,
   'name' : string,
   'registeredAt' : Time,
+}
+export interface RestaurantOrder {
+  'id' : string,
+  'status' : string,
+  'kitchenStatus' : string,
+  'createdAt' : bigint,
+  'tableId' : string,
+  'tableNumber' : string,
+  'restaurantId' : string,
+  'updatedAt' : bigint,
+  'itemsJson' : string,
 }
 export interface RestorationProject {
   'id' : string,
@@ -70,6 +86,11 @@ export type ServiceType = { 'deepClean' : null } |
   { 'woodPolishing' : null } |
   { 'upholsteryClean' : null };
 export type Time = bigint;
+export interface UserProfile {
+  'name' : string,
+  'email' : string,
+  'phone' : string,
+}
 export type UserRole = { 'admin' : null } |
   { 'user' : null } |
   { 'guest' : null };
@@ -125,15 +146,37 @@ export interface _SERVICE {
   'getAllRestorationProjects' : ActorMethod<[], Array<RestorationProject>>,
   'getAllSales' : ActorMethod<[], Array<SaleTransaction>>,
   'getAllWorkshopActivities' : ActorMethod<[], Array<WorkshopActivity>>,
+  'getCallerUserProfile' : ActorMethod<[], [] | [UserProfile]>,
   'getCallerUserRole' : ActorMethod<[], UserRole>,
   'getCleaningAppointment' : ActorMethod<[string], [] | [CleaningAppointment]>,
   'getEmployee' : ActorMethod<[string], [] | [Employee]>,
+  'getMenuSnapshot' : ActorMethod<[string], [] | [MenuSnapshot]>,
+  'getRestaurantOrderHistory' : ActorMethod<
+    [string],
+    [] | [Array<RestaurantOrder>]
+  >,
+  'getRestaurantOrders' : ActorMethod<[string], Array<RestaurantOrder>>,
+  'getRestaurantOrdersByStatus' : ActorMethod<
+    [string, string],
+    Array<RestaurantOrder>
+  >,
   'getRestorationProject' : ActorMethod<[string], [] | [RestorationProject]>,
   'getSale' : ActorMethod<[string], [] | [SaleTransaction]>,
+  'getUserProfile' : ActorMethod<[Principal], [] | [UserProfile]>,
   'getWorkshopActivity' : ActorMethod<[string], [] | [WorkshopActivity]>,
   'isCallerAdmin' : ActorMethod<[], boolean>,
+  'saveCallerUserProfile' : ActorMethod<[UserProfile], undefined>,
+  'saveMenuSnapshot' : ActorMethod<[string, string], undefined>,
+  'searchRestaurantOrders' : ActorMethod<
+    [string, string],
+    Array<RestaurantOrder>
+  >,
+  'submitRestaurantOrder' : ActorMethod<[RestaurantOrder], undefined>,
+  'updateRestaurantOrderStatus' : ActorMethod<
+    [string, string, string],
+    boolean
+  >,
   'uploadFile' : ActorMethod<[string, ExternalBlob], undefined>,
-  'validateAdminOrRole' : ActorMethod<[Principal, Role], undefined>,
 }
 export declare const idlService: IDL.ServiceClass;
 export declare const idlInitArgs: IDL.Type[];

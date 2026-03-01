@@ -109,6 +109,27 @@ export const UserRole = IDL.Variant({
   'user' : IDL.Null,
   'guest' : IDL.Null,
 });
+export const UserProfile = IDL.Record({
+  'name' : IDL.Text,
+  'email' : IDL.Text,
+  'phone' : IDL.Text,
+});
+export const MenuSnapshot = IDL.Record({
+  'menuJson' : IDL.Text,
+  'restaurantId' : IDL.Text,
+  'timestamp' : IDL.Int,
+});
+export const RestaurantOrder = IDL.Record({
+  'id' : IDL.Text,
+  'status' : IDL.Text,
+  'kitchenStatus' : IDL.Text,
+  'createdAt' : IDL.Int,
+  'tableId' : IDL.Text,
+  'tableNumber' : IDL.Text,
+  'restaurantId' : IDL.Text,
+  'updatedAt' : IDL.Int,
+  'itemsJson' : IDL.Text,
+});
 export const ExternalBlob = IDL.Vec(IDL.Nat8);
 
 export const idlService = IDL.Service({
@@ -162,23 +183,61 @@ export const idlService = IDL.Service({
       [IDL.Vec(WorkshopActivity)],
       ['query'],
     ),
+  'getCallerUserProfile' : IDL.Func([], [IDL.Opt(UserProfile)], ['query']),
   'getCallerUserRole' : IDL.Func([], [UserRole], ['query']),
   'getCleaningAppointment' : IDL.Func(
       [IDL.Text],
       [IDL.Opt(CleaningAppointment)],
-      [],
+      ['query'],
     ),
-  'getEmployee' : IDL.Func([IDL.Text], [IDL.Opt(Employee)], []),
+  'getEmployee' : IDL.Func([IDL.Text], [IDL.Opt(Employee)], ['query']),
+  'getMenuSnapshot' : IDL.Func([IDL.Text], [IDL.Opt(MenuSnapshot)], ['query']),
+  'getRestaurantOrderHistory' : IDL.Func(
+      [IDL.Text],
+      [IDL.Opt(IDL.Vec(RestaurantOrder))],
+      ['query'],
+    ),
+  'getRestaurantOrders' : IDL.Func(
+      [IDL.Text],
+      [IDL.Vec(RestaurantOrder)],
+      ['query'],
+    ),
+  'getRestaurantOrdersByStatus' : IDL.Func(
+      [IDL.Text, IDL.Text],
+      [IDL.Vec(RestaurantOrder)],
+      ['query'],
+    ),
   'getRestorationProject' : IDL.Func(
       [IDL.Text],
       [IDL.Opt(RestorationProject)],
+      ['query'],
+    ),
+  'getSale' : IDL.Func([IDL.Text], [IDL.Opt(SaleTransaction)], ['query']),
+  'getUserProfile' : IDL.Func(
+      [IDL.Principal],
+      [IDL.Opt(UserProfile)],
+      ['query'],
+    ),
+  'getWorkshopActivity' : IDL.Func(
+      [IDL.Text],
+      [IDL.Opt(WorkshopActivity)],
+      ['query'],
+    ),
+  'isCallerAdmin' : IDL.Func([], [IDL.Bool], ['query']),
+  'saveCallerUserProfile' : IDL.Func([UserProfile], [], []),
+  'saveMenuSnapshot' : IDL.Func([IDL.Text, IDL.Text], [], []),
+  'searchRestaurantOrders' : IDL.Func(
+      [IDL.Text, IDL.Text],
+      [IDL.Vec(RestaurantOrder)],
+      ['query'],
+    ),
+  'submitRestaurantOrder' : IDL.Func([RestaurantOrder], [], []),
+  'updateRestaurantOrderStatus' : IDL.Func(
+      [IDL.Text, IDL.Text, IDL.Text],
+      [IDL.Bool],
       [],
     ),
-  'getSale' : IDL.Func([IDL.Text], [IDL.Opt(SaleTransaction)], []),
-  'getWorkshopActivity' : IDL.Func([IDL.Text], [IDL.Opt(WorkshopActivity)], []),
-  'isCallerAdmin' : IDL.Func([], [IDL.Bool], ['query']),
   'uploadFile' : IDL.Func([IDL.Text, ExternalBlob], [], []),
-  'validateAdminOrRole' : IDL.Func([IDL.Principal, Role], [], ['oneway']),
 });
 
 export const idlInitArgs = [];
@@ -282,6 +341,27 @@ export const idlFactory = ({ IDL }) => {
     'user' : IDL.Null,
     'guest' : IDL.Null,
   });
+  const UserProfile = IDL.Record({
+    'name' : IDL.Text,
+    'email' : IDL.Text,
+    'phone' : IDL.Text,
+  });
+  const MenuSnapshot = IDL.Record({
+    'menuJson' : IDL.Text,
+    'restaurantId' : IDL.Text,
+    'timestamp' : IDL.Int,
+  });
+  const RestaurantOrder = IDL.Record({
+    'id' : IDL.Text,
+    'status' : IDL.Text,
+    'kitchenStatus' : IDL.Text,
+    'createdAt' : IDL.Int,
+    'tableId' : IDL.Text,
+    'tableNumber' : IDL.Text,
+    'restaurantId' : IDL.Text,
+    'updatedAt' : IDL.Int,
+    'itemsJson' : IDL.Text,
+  });
   const ExternalBlob = IDL.Vec(IDL.Nat8);
   
   return IDL.Service({
@@ -335,27 +415,65 @@ export const idlFactory = ({ IDL }) => {
         [IDL.Vec(WorkshopActivity)],
         ['query'],
       ),
+    'getCallerUserProfile' : IDL.Func([], [IDL.Opt(UserProfile)], ['query']),
     'getCallerUserRole' : IDL.Func([], [UserRole], ['query']),
     'getCleaningAppointment' : IDL.Func(
         [IDL.Text],
         [IDL.Opt(CleaningAppointment)],
-        [],
+        ['query'],
       ),
-    'getEmployee' : IDL.Func([IDL.Text], [IDL.Opt(Employee)], []),
+    'getEmployee' : IDL.Func([IDL.Text], [IDL.Opt(Employee)], ['query']),
+    'getMenuSnapshot' : IDL.Func(
+        [IDL.Text],
+        [IDL.Opt(MenuSnapshot)],
+        ['query'],
+      ),
+    'getRestaurantOrderHistory' : IDL.Func(
+        [IDL.Text],
+        [IDL.Opt(IDL.Vec(RestaurantOrder))],
+        ['query'],
+      ),
+    'getRestaurantOrders' : IDL.Func(
+        [IDL.Text],
+        [IDL.Vec(RestaurantOrder)],
+        ['query'],
+      ),
+    'getRestaurantOrdersByStatus' : IDL.Func(
+        [IDL.Text, IDL.Text],
+        [IDL.Vec(RestaurantOrder)],
+        ['query'],
+      ),
     'getRestorationProject' : IDL.Func(
         [IDL.Text],
         [IDL.Opt(RestorationProject)],
-        [],
+        ['query'],
       ),
-    'getSale' : IDL.Func([IDL.Text], [IDL.Opt(SaleTransaction)], []),
+    'getSale' : IDL.Func([IDL.Text], [IDL.Opt(SaleTransaction)], ['query']),
+    'getUserProfile' : IDL.Func(
+        [IDL.Principal],
+        [IDL.Opt(UserProfile)],
+        ['query'],
+      ),
     'getWorkshopActivity' : IDL.Func(
         [IDL.Text],
         [IDL.Opt(WorkshopActivity)],
-        [],
+        ['query'],
       ),
     'isCallerAdmin' : IDL.Func([], [IDL.Bool], ['query']),
+    'saveCallerUserProfile' : IDL.Func([UserProfile], [], []),
+    'saveMenuSnapshot' : IDL.Func([IDL.Text, IDL.Text], [], []),
+    'searchRestaurantOrders' : IDL.Func(
+        [IDL.Text, IDL.Text],
+        [IDL.Vec(RestaurantOrder)],
+        ['query'],
+      ),
+    'submitRestaurantOrder' : IDL.Func([RestaurantOrder], [], []),
+    'updateRestaurantOrderStatus' : IDL.Func(
+        [IDL.Text, IDL.Text, IDL.Text],
+        [IDL.Bool],
+        [],
+      ),
     'uploadFile' : IDL.Func([IDL.Text, ExternalBlob], [], []),
-    'validateAdminOrRole' : IDL.Func([IDL.Principal, Role], [], ['oneway']),
   });
 };
 

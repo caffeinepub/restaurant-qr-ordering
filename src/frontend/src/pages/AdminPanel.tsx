@@ -26,10 +26,12 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { useActor } from "../hooks/useActor";
 import { useRestaurantStore } from "../restaurantDataStore";
 import { useSellerStore } from "../sellerStore";
 import type { MenuCategory, MenuItem } from "../types";
-import { encodeMenuForQR, saveMenuSnapshot } from "../utils/qrPayload";
+import { saveMenuToBackend } from "../utils/menuSync";
+import { saveMenuSnapshot } from "../utils/qrPayload";
 
 interface Props {
   restaurantId: string;
@@ -63,12 +65,14 @@ export default function AdminPanel({ restaurantId, onLogout }: Props) {
 
   const { restaurants } = useSellerStore();
   const restaurantInfo = restaurants.find((r) => r.id === restaurantId);
+  const { actor } = useActor();
+  const actorRef = useRef(actor);
+  actorRef.current = actor;
 
   const [section, setSection] = useState<AdminSection>("menu");
 
   // Keep localStorage snapshot fresh whenever menu or GST changes.
-  // This is used as a fallback on same-device/same-browser QR scans.
-  // The primary mechanism is the ?d= param embedded in QR URLs (no network needed).
+  // Also push to backend canister so customer phones can fetch menu on QR scan.
   useEffect(() => {
     const snapshot = {
       restaurantId,
@@ -78,7 +82,12 @@ export default function AdminPanel({ restaurantId, onLogout }: Props) {
       menuItems,
       savedAt: Date.now(),
     };
+    // Save locally (for same-device fallback)
     saveMenuSnapshot(snapshot);
+    // Push to backend canister (for cross-device: customer phones)
+    if (actorRef.current) {
+      saveMenuToBackend(actorRef.current, snapshot);
+    }
   }, [menuItems, gstPercent, restaurantId, restaurantInfo]);
 
   // Menu editing state
@@ -634,11 +643,11 @@ export default function AdminPanel({ restaurantId, onLogout }: Props) {
               <div className="mb-4 px-4 py-3 bg-green-50 border border-green-200 rounded-xl text-sm text-green-800 flex items-start gap-2">
                 <span className="text-base leading-none mt-0.5">✅</span>
                 <span>
-                  <strong>Menu is embedded directly in each QR code.</strong>{" "}
-                  Customers scan and see the menu instantly on any phone — no
-                  internet required on their device. After adding or editing
-                  menu items, the QR codes here update automatically. Reprint
-                  them so customers get the latest menu.
+                  <strong>QR codes are short and always scannable.</strong> The
+                  menu is saved to the cloud automatically. When a customer
+                  scans, the latest menu loads on their phone. After adding or
+                  editing menu items, changes appear on the next scan — no need
+                  to reprint QR codes.
                 </span>
               </div>
             )}
@@ -666,19 +675,13 @@ export default function AdminPanel({ restaurantId, onLogout }: Props) {
             ) : (
               <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 {tables.map((table) => {
-                  // Embed the full menu into the QR URL as ?d=BASE64 so any
-                  // customer phone can decode it without localStorage or backend.
+                  // SHORT QR URL — only restaurant ID, table ID, table name.
+                  // Menu is stored in the ICP canister (saveMenuToBackend above)
+                  // and fetched by the customer's phone when they scan.
+                  // Short URLs = scannable QR codes on any phone.
                   const tn = encodeURIComponent(table.tableNumber);
-                  const menuEncoded = encodeMenuForQR(
-                    restaurantInfo?.name ?? "Restaurant",
-                    gstPercent,
-                    menuItems,
-                  );
-                  const qrData = menuEncoded
-                    ? `${window.location.origin}/?r=${restaurantId}&t=${table.id}&tn=${tn}&d=${menuEncoded}`
-                    : `${window.location.origin}/?r=${restaurantId}&t=${table.id}&tn=${tn}`;
-                  // Use lower error correction L for better scan reliability with longer URLs
-                  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(qrData)}&bgcolor=ffffff&color=000000&margin=10&ecc=L`;
+                  const qrData = `${window.location.origin}/?r=${restaurantId}&t=${table.id}&tn=${tn}`;
+                  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(qrData)}&bgcolor=ffffff&color=000000&margin=10&ecc=M`;
                   return (
                     <div
                       key={table.id}
