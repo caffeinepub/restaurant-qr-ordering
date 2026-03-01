@@ -7,10 +7,12 @@ import {
   Plus,
   ShoppingCart,
   UtensilsCrossed,
+  WifiOff,
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import { useSellerStore } from "../sellerStore";
 import { useStore } from "../store";
 import type { CartItem, MenuCategory } from "../types";
 
@@ -32,6 +34,7 @@ type FilterCategory = (typeof ALL_CATEGORIES)[number];
 export default function CustomerMenu({ token }: Props) {
   const { tables, menuItems, orders, gstPercent, placeOrder, addItemsToOrder } =
     useStore();
+  const { appSuspended } = useSellerStore();
   const [activeCategory, setActiveCategory] = useState<FilterCategory>("All");
   const [cart, setCart] = useState<CartItem[]>([]);
   const [cartOpen, setCartOpen] = useState(false);
@@ -118,6 +121,27 @@ export default function CustomerMenu({ token }: Props) {
     setCartOpen(false);
     setAddingMore(false);
     setView("confirmation");
+  }
+
+  // Service suspended screen
+  if (appSuspended) {
+    return (
+      <div className="min-h-screen bg-gray-950 flex items-center justify-center p-4">
+        <div className="text-center max-w-sm">
+          <div className="w-20 h-20 rounded-2xl bg-gray-800 flex items-center justify-center mx-auto mb-6">
+            <WifiOff className="w-10 h-10 text-gray-400" />
+          </div>
+          <h2 className="text-2xl font-display font-bold text-white mb-3">
+            Service Suspended
+          </h2>
+          <p className="text-gray-400 leading-relaxed">
+            This restaurant's service has been temporarily suspended.
+            <br />
+            Please contact the restaurant management for more information.
+          </p>
+        </div>
+      </div>
+    );
   }
 
   if (!table) {

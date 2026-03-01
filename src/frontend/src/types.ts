@@ -68,3 +68,21 @@ export interface AppState {
   gstPercent: number;
   userRole: UserRole;
 }
+
+export interface RestaurantPins {
+  admin: string;
+  kitchen: string;
+  billing: string;
+}
+
+export interface Restaurant {
+  id: string;
+  name: string;
+  ownerName: string;
+  ownerPhone: string;
+  subscriptionStartDate: number; // timestamp ms
+  subscriptionEndDate: number; // timestamp ms (30 days from start)
+  isActive: boolean;
+  createdAt: number;
+  pins?: RestaurantPins;
+}

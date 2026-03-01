@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
+import { useSellerStore } from "../sellerStore";
 import { useStore } from "../store";
 import type { MenuCategory, MenuItem } from "../types";
 
@@ -41,10 +42,6 @@ const CATEGORIES: MenuCategory[] = [
   "Beverages",
   "Desserts",
 ];
-
-const PINS: Record<string, "admin"> = {
-  "0000": "admin",
-};
 
 export default function AdminPanel({ navigate }: Props) {
   const {
@@ -64,6 +61,7 @@ export default function AdminPanel({ navigate }: Props) {
     deleteTable,
     updateGST,
   } = useStore();
+  const { getActivePins } = useSellerStore();
 
   const [pin, setPin] = useState("");
   const [pinError, setPinError] = useState(false);
@@ -126,7 +124,8 @@ export default function AdminPanel({ navigate }: Props) {
   const isAuthenticated = userRole === "admin";
 
   function handleLogin() {
-    const role = PINS[pin];
+    const pins = getActivePins();
+    const role = pin === pins.admin ? "admin" : undefined;
     if (role) {
       login(role);
       setPinError(false);

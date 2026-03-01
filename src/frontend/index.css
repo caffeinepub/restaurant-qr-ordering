@@ -2,6 +2,29 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ─── Seller Dashboard fonts ─────────────────────────────────────────────────── */
+@font-face {
+  font-family: "Geist Mono";
+  src: url("/assets/fonts/GeistMono-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Sora";
+  src: url("/assets/fonts/Sora-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Sora";
+  src: url("/assets/fonts/Sora-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
 @layer base {
   :root {
     --radius: 0.75rem;
@@ -163,4 +186,153 @@
 }
 .slide-up {
   animation: slide-up 0.3s ease-out;
+}
+
+/* ─── Seller Dashboard Design System ─────────────────────────────────────────── */
+/* Deep slate / obsidian dark theme with electric indigo accent */
+
+:root {
+  /* Seller color palette */
+  --seller-bg: oklch(0.12 0.015 260);
+  --seller-bg-elevated: oklch(0.15 0.018 260);
+  --seller-card-bg: oklch(0.17 0.018 260);
+  --seller-card-subtle: oklch(0.14 0.015 260);
+  --seller-header-bg: oklch(0.13 0.016 260);
+  --seller-text: oklch(0.96 0.005 260);
+  --seller-muted: oklch(0.55 0.025 260);
+  --seller-border: oklch(0.25 0.02 260);
+  --seller-accent: oklch(0.72 0.18 280);
+  --seller-accent-dim: oklch(0.25 0.06 280);
+  --seller-icon-bg: oklch(0.2 0.02 260);
+
+  /* Seller stat backgrounds */
+  --seller-stat-accent-bg: oklch(0.22 0.05 280);
+  --seller-stat-green-bg: oklch(0.2 0.04 145);
+  --seller-stat-muted-bg: oklch(0.18 0.015 260);
+  --seller-stat-amber-bg: oklch(0.22 0.05 80);
+}
+
+/* Base containers */
+.seller-bg {
+  background: oklch(0.12 0.015 260);
+  background-image:
+    radial-gradient(ellipse 80% 60% at 50% -20%, oklch(0.2 0.06 280 / 0.3), transparent),
+    radial-gradient(ellipse 60% 40% at 80% 80%, oklch(0.18 0.04 260 / 0.2), transparent);
+  min-height: 100vh;
+}
+
+.seller-grid-pattern {
+  background-image:
+    linear-gradient(oklch(0.72 0.18 280 / 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, oklch(0.72 0.18 280 / 0.04) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+.seller-header {
+  background: oklch(0.13 0.016 260 / 0.95);
+  backdrop-filter: blur(12px);
+}
+
+.seller-card {
+  background: oklch(0.17 0.018 260);
+  border: 1px solid oklch(0.25 0.02 260);
+}
+
+.seller-card-subtle {
+  background: oklch(0.14 0.015 260);
+}
+
+.seller-icon-bg {
+  background: oklch(0.2 0.02 260);
+}
+
+/* Stat backgrounds */
+.seller-stat-bg-accent {
+  background: oklch(0.22 0.05 280);
+}
+.seller-stat-bg-green {
+  background: oklch(0.2 0.04 145);
+}
+.seller-stat-bg-muted {
+  background: oklch(0.18 0.015 260);
+}
+.seller-stat-bg-amber {
+  background: oklch(0.22 0.05 80);
+}
+
+/* Text */
+.text-seller-text {
+  color: oklch(0.96 0.005 260);
+}
+.text-seller-muted {
+  color: oklch(0.55 0.025 260);
+}
+.text-seller-accent {
+  color: oklch(0.72 0.18 280);
+}
+
+/* Borders */
+.border-seller-border {
+  border-color: oklch(0.25 0.02 260);
+}
+
+/* Input */
+.seller-input {
+  background: oklch(0.14 0.015 260) !important;
+  border-color: oklch(0.28 0.025 260) !important;
+  color: oklch(0.96 0.005 260) !important;
+}
+.seller-input:focus {
+  border-color: oklch(0.72 0.18 280 / 0.6) !important;
+  box-shadow: 0 0 0 2px oklch(0.72 0.18 280 / 0.15) !important;
+}
+.seller-input::placeholder {
+  color: oklch(0.45 0.02 260) !important;
+}
+
+/* Buttons */
+.seller-btn {
+  background: oklch(0.45 0.18 280);
+  color: oklch(0.98 0.005 260);
+  border: none;
+  transition: background 0.15s;
+}
+.seller-btn:hover {
+  background: oklch(0.52 0.18 280);
+}
+.seller-btn:disabled {
+  background: oklch(0.3 0.06 280);
+  color: oklch(0.6 0.02 260);
+}
+
+.seller-btn-sm {
+  background: oklch(0.45 0.18 280);
+  color: oklch(0.98 0.005 260);
+  border: none;
+  border-radius: 0.5rem;
+  font-weight: 500;
+  transition: background 0.15s;
+}
+.seller-btn-sm:hover {
+  background: oklch(0.52 0.18 280);
+}
+
+.seller-outline-btn {
+  background: transparent;
+  border: 1px solid oklch(0.28 0.025 260);
+  color: oklch(0.65 0.02 260);
+  transition: all 0.15s;
+}
+.seller-outline-btn:hover {
+  background: oklch(0.2 0.02 260);
+  border-color: oklch(0.35 0.03 260);
+  color: oklch(0.85 0.01 260);
+}
+
+/* Shadows */
+.shadow-seller {
+  box-shadow: 0 4px 24px oklch(0.05 0.01 260 / 0.8), 0 1px 4px oklch(0.05 0.01 260 / 0.5);
+}
+.shadow-seller-glow {
+  box-shadow: 0 0 20px oklch(0.72 0.18 280 / 0.25);
 }

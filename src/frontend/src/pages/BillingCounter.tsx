@@ -5,17 +5,13 @@ import { Separator } from "@/components/ui/separator";
 import { CheckCircle, LogOut, Receipt, X } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { useSellerStore } from "../sellerStore";
 import { useStore } from "../store";
 import type { Bill } from "../types";
 
 interface Props {
   navigate: (page: "home" | "kitchen" | "billing" | "admin") => void;
 }
-
-const PINS: Record<string, "billing" | "admin"> = {
-  "5678": "billing",
-  "0000": "admin",
-};
 
 export default function BillingCounter({ navigate }: Props) {
   const {
@@ -29,6 +25,7 @@ export default function BillingCounter({ navigate }: Props) {
     generateBill,
     processPayment,
   } = useStore();
+  const { getActivePins } = useSellerStore();
   const [pin, setPin] = useState("");
   const [pinError, setPinError] = useState(false);
   const [activeTab, setActiveTab] = useState<"tables" | "pending" | "paid">(
@@ -43,7 +40,11 @@ export default function BillingCounter({ navigate }: Props) {
   const isAuthenticated = userRole === "billing" || userRole === "admin";
 
   function handleLogin() {
-    const role = PINS[pin];
+    const pins = getActivePins();
+    let role: "billing" | "admin" | undefined;
+    if (pin === pins.billing) role = "billing";
+    else if (pin === pins.admin) role = "admin";
+
     if (role) {
       login(role);
       setPinError(false);

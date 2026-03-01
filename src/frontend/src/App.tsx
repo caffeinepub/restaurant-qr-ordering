@@ -5,14 +5,16 @@ import BillingCounter from "./pages/BillingCounter";
 import CustomerMenu from "./pages/CustomerMenu";
 import HomePage from "./pages/HomePage";
 import KitchenDashboard from "./pages/KitchenDashboard";
+import SellerDashboard from "./pages/SellerDashboard";
 
-type PageView = "home" | "kitchen" | "billing" | "admin";
+type PageView = "home" | "kitchen" | "billing" | "admin" | "seller";
 
 function getPageFromHash(): PageView {
   const hash = window.location.hash.replace("#", "");
   if (hash === "kitchen") return "kitchen";
   if (hash === "billing") return "billing";
   if (hash === "admin") return "admin";
+  if (hash === "seller") return "seller";
   return "home";
 }
 
@@ -54,6 +56,7 @@ export default function App() {
       {page === "kitchen" && <KitchenDashboard navigate={navigate} />}
       {page === "billing" && <BillingCounter navigate={navigate} />}
       {page === "admin" && <AdminPanel navigate={navigate} />}
+      {page === "seller" && <SellerDashboard navigate={navigate} />}
       <Toaster richColors position="top-center" />
     </>
   );

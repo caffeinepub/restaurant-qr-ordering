@@ -5,12 +5,13 @@ import {
   QrCode,
   Receipt,
   Settings,
+  Store,
   UtensilsCrossed,
 } from "lucide-react";
 import { useStore } from "../store";
 
 interface Props {
-  navigate: (page: "home" | "kitchen" | "billing" | "admin") => void;
+  navigate: (page: "home" | "kitchen" | "billing" | "admin" | "seller") => void;
 }
 
 export default function HomePage({ navigate }: Props) {
@@ -89,7 +90,7 @@ export default function HomePage({ navigate }: Props) {
         </div>
 
         {/* Navigation Cards */}
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6 mb-12">
+        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-12">
           <DashboardCard
             icon={<ChefHat className="w-7 h-7" />}
             title="Kitchen Dashboard"
@@ -113,6 +114,14 @@ export default function HomePage({ navigate }: Props) {
             color="purple"
             badge="PIN: 0000"
             onClick={() => navigate("admin")}
+          />
+          <DashboardCard
+            icon={<Store className="w-7 h-7" />}
+            title="Seller Dashboard"
+            description="Manage all restaurants, subscriptions, service status, and staff PINs from one place."
+            color="blue"
+            badge="Seller Access"
+            onClick={() => navigate("seller")}
           />
         </div>
 
@@ -168,7 +177,7 @@ interface DashboardCardProps {
   icon: React.ReactNode;
   title: string;
   description: string;
-  color: "orange" | "green" | "purple";
+  color: "orange" | "green" | "purple" | "blue";
   badge: string;
   onClick: () => void;
 }
@@ -185,11 +194,13 @@ function DashboardCard({
     orange: "bg-orange-50 text-orange-600 border-orange-200",
     green: "bg-green-50 text-green-600 border-green-200",
     purple: "bg-purple-50 text-purple-600 border-purple-200",
+    blue: "bg-blue-50 text-blue-600 border-blue-200",
   };
   const iconBg = {
     orange: "bg-orange-500",
     green: "bg-green-500",
     purple: "bg-purple-500",
+    blue: "bg-blue-500",
   };
 
   return (

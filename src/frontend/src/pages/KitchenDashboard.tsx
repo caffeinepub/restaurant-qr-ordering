@@ -4,6 +4,7 @@ import { Input } from "@/components/ui/input";
 import { ChefHat, LogOut, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { useSellerStore } from "../sellerStore";
 import { useStore } from "../store";
 
 interface Props {
@@ -12,14 +13,10 @@ interface Props {
 
 type KitchenStatus = "pending" | "preparing" | "ready" | "delivered";
 
-const PINS: Record<string, "kitchen" | "admin"> = {
-  "1234": "kitchen",
-  "0000": "admin",
-};
-
 export default function KitchenDashboard({ navigate }: Props) {
   const { userRole, login, logout, orders, updateOrderKitchenStatus } =
     useStore();
+  const { getActivePins } = useSellerStore();
   const [pin, setPin] = useState("");
   const [pinError, setPinError] = useState(false);
   const [filterStatus, setFilterStatus] = useState<KitchenStatus | "all">(
@@ -29,7 +26,11 @@ export default function KitchenDashboard({ navigate }: Props) {
   const isAuthenticated = userRole === "kitchen" || userRole === "admin";
 
   function handleLogin() {
-    const role = PINS[pin];
+    const pins = getActivePins();
+    let role: "kitchen" | "admin" | undefined;
+    if (pin === pins.kitchen) role = "kitchen";
+    else if (pin === pins.admin) role = "admin";
+
     if (role) {
       login(role);
       setPinError(false);
