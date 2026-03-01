@@ -24,11 +24,16 @@ import {
   UtensilsCrossed,
   X,
 } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useRestaurantStore } from "../restaurantDataStore";
 import { useSellerStore } from "../sellerStore";
 import type { MenuCategory, MenuItem } from "../types";
+import {
+  type CompactMenuPayload,
+  encodeCompactMenu,
+  saveMenuSnapshot,
+} from "../utils/qrPayload";
 
 interface Props {
   restaurantId: string;
@@ -64,6 +69,21 @@ export default function AdminPanel({ restaurantId, onLogout }: Props) {
   const restaurantInfo = restaurants.find((r) => r.id === restaurantId);
 
   const [section, setSection] = useState<AdminSection>("menu");
+
+  // Save a fresh menu snapshot to localStorage whenever the Tables section is shown
+  // so customer phones (same origin) can load it from a compact QR URL.
+  useEffect(() => {
+    if (section === "tables") {
+      saveMenuSnapshot({
+        restaurantId,
+        restaurantName: restaurantInfo?.name ?? "Restaurant",
+        gstPercent,
+        isActive: restaurantInfo?.isActive ?? true,
+        menuItems,
+        savedAt: Date.now(),
+      });
+    }
+  }, [section, menuItems, gstPercent, restaurantId, restaurantInfo]);
 
   // Menu editing state
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -613,6 +633,19 @@ export default function AdminPanel({ restaurantId, onLogout }: Props) {
               </Button>
             </div>
 
+            {/* QR code info notice */}
+            {tables.length > 0 && (
+              <div className="mb-4 px-4 py-3 bg-green-50 border border-green-200 rounded-xl text-sm text-green-800 flex items-start gap-2">
+                <span className="text-base leading-none mt-0.5">✅</span>
+                <span>
+                  <strong>Menu is embedded in QR codes.</strong> Customers can
+                  scan from any phone without needing a network connection to
+                  this device. After adding or editing menu items, return here
+                  to reprint QR codes so customers see the updated menu.
+                </span>
+              </div>
+            )}
+
             {tables.length === 0 ? (
               <div className="text-center py-16">
                 <div className="text-5xl mb-3">🪑</div>
@@ -636,8 +669,28 @@ export default function AdminPanel({ restaurantId, onLogout }: Props) {
             ) : (
               <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 {tables.map((table) => {
-                  const qrData = `${window.location.origin}/?table=${table.sessionToken}&rid=${restaurantId}`;
-                  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(qrData)}&bgcolor=ffffff&color=000000&margin=10`;
+                  // Build compact payload — menu embedded directly in the URL
+                  // so any customer's phone can decode without prior localStorage data.
+                  const compactPayload: CompactMenuPayload = {
+                    r: restaurantId,
+                    rn: restaurantInfo?.name ?? "Restaurant",
+                    t: table.id,
+                    tn: table.tableNumber,
+                    g: gstPercent,
+                    m: menuItems
+                      .filter((item) => item.isAvailable)
+                      .map((item) => ({
+                        i: item.id,
+                        n: item.name,
+                        c: item.category,
+                        p: item.price,
+                        e: item.emoji,
+                      })),
+                  };
+                  const encoded = encodeCompactMenu(compactPayload);
+                  const qrData = `${window.location.origin}/?d=${encoded}`;
+                  // Use error correction L (lowest) for maximum data capacity
+                  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(qrData)}&bgcolor=ffffff&color=000000&margin=10&ecc=L`;
                   return (
                     <div
                       key={table.id}

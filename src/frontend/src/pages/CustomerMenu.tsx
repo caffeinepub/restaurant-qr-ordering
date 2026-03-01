@@ -3,7 +3,6 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import {
   CheckCircle,
-  Loader2,
   Minus,
   Plus,
   ShoppingCart,
@@ -13,13 +12,24 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { getOrCreateStore, useRestaurantStore } from "../restaurantDataStore";
+import { useRestaurantStore } from "../restaurantDataStore";
 import { useSellerStore } from "../sellerStore";
-import type { CartItem, MenuCategory } from "../types";
+import type { CartItem, MenuCategory, QRPayload } from "../types";
+import {
+  compactToQRPayload,
+  decodeCompactMenu,
+  decodeQRPayload,
+  loadMenuSnapshot,
+} from "../utils/qrPayload";
 
 interface Props {
-  token: string;
-  restaurantId: string;
+  // Newest format: ?d=BASE64 — menu fully embedded in URL
+  menuPayload?: string;
+  // Legacy compact format: ?r=ID&t=ID (needs localStorage on same device)
+  restaurantId?: string;
+  tableId?: string;
+  // Legacy base64 format
+  qrParam?: string;
 }
 
 type CustomerView = "menu" | "confirmation" | "options";
@@ -33,15 +43,19 @@ const CATEGORIES: MenuCategory[] = [
 const ALL_CATEGORIES = ["All", ...CATEGORIES] as const;
 type FilterCategory = (typeof ALL_CATEGORIES)[number];
 
-export default function CustomerMenu({ token, restaurantId }: Props) {
-  const { tables, menuItems, orders, gstPercent, placeOrder, addItemsToOrder } =
-    useRestaurantStore(restaurantId);
-
-  // Access full seller store including hydration status
+// Inner component that uses the decoded payload — restaurantId is known at this point
+function CustomerMenuInner({ payload }: { payload: QRPayload }) {
+  const { orders, placeOrder, addItemsToOrder } = useRestaurantStore(
+    payload.restaurantId,
+  );
   const sellerRestaurants = useSellerStore((s) => s.restaurants);
-  const sellerHydrated = useSellerStore((s) => s._hasHydrated);
 
-  const restaurant = sellerRestaurants.find((r) => r.id === restaurantId);
+  const restaurant = sellerRestaurants.find(
+    (r) => r.id === payload.restaurantId,
+  );
+  // If restaurant not found in seller store it means this is a customer device that never loaded seller data
+  // In this case we trust the QR payload (restaurant exists, we just don't have suspension info locally)
+  // Only suspend if we explicitly find it and it's inactive
   const isSuspended = restaurant ? !restaurant.isActive : false;
 
   const [activeCategory, setActiveCategory] = useState<FilterCategory>("All");
@@ -50,22 +64,17 @@ export default function CustomerMenu({ token, restaurantId }: Props) {
   const [view, setView] = useState<CustomerView>("menu");
   const [placedOrderId, setPlacedOrderId] = useState<string | null>(null);
   const [addingMore, setAddingMore] = useState(false);
-  // Track whether initial view has been determined (to avoid flicker)
   const initialViewSet = useRef(false);
-  // Grace period: even if stores report hydrated, wait a tick before showing
-  // "Restaurant Not Found" — handles async rehydration edge cases
-  const [readyToShowError, setReadyToShowError] = useState(false);
 
-  const table = tables.find((t) => t.sessionToken === token);
-  const activeOrder = table?.currentOrderId
-    ? orders.find((o) => o.id === table.currentOrderId && o.status === "active")
-    : null;
+  // Find active order by tableId (not sessionToken — we have tableId in payload now)
+  const activeOrder =
+    orders.find(
+      (o) => o.tableId === payload.tableId && o.status === "active",
+    ) ?? null;
 
-  // On first load after hydration, determine initial view:
-  // - If active order exists → show "options" (second scan flow)
-  // - Otherwise → show "menu" (first scan flow)
+  // Determine initial view once
   useEffect(() => {
-    if (!initialViewSet.current && table) {
+    if (!initialViewSet.current) {
       initialViewSet.current = true;
       if (activeOrder) {
         setView("options");
@@ -73,58 +82,15 @@ export default function CustomerMenu({ token, restaurantId }: Props) {
         setView("menu");
       }
     }
-  }, [table, activeOrder]);
+  }, [activeOrder]);
 
-  // Grace period: once seller store is hydrated, wait 800ms before allowing
-  // the "Restaurant Not Found" error to show — guards against async rehydration
-  useEffect(() => {
-    if (sellerHydrated) {
-      const timer = setTimeout(() => setReadyToShowError(true), 800);
-      return () => clearTimeout(timer);
-    }
-  }, [sellerHydrated]);
-
-  // Auto-sync menu: rehydrate restaurant store every 10 seconds so the
-  // customer menu stays up to date when the admin adds or edits items --
-  // no new QR code needed. Also listen for cross-tab storage events.
-  useEffect(() => {
-    const storageKey = `restaurant_data_${restaurantId}`;
-    const sellerKey = "restaurant_seller_state";
-
-    function rehydrateBoth() {
-      const store = getOrCreateStore(restaurantId);
-      // Cast to access the persist API added by zustand/middleware at runtime
-      const persistApi = (
-        store as unknown as { persist?: { rehydrate?: () => void } }
-      ).persist;
-      if (persistApi?.rehydrate) {
-        persistApi.rehydrate();
-      }
-    }
-
-    function handleStorage(e: StorageEvent) {
-      if (e.key === storageKey || e.key === sellerKey) {
-        rehydrateBoth();
-      }
-    }
-
-    // Cross-tab sync
-    window.addEventListener("storage", handleStorage);
-    // Same-device polling (every 10 s) so menu updates even without a tab change
-    const interval = setInterval(rehydrateBoth, 10_000);
-
-    return () => {
-      window.removeEventListener("storage", handleStorage);
-      clearInterval(interval);
-    };
-  }, [restaurantId]);
+  const menuItems = payload.menuItems.filter((item) => item.isAvailable);
+  const gstPercent = payload.gstPercent;
 
   const filteredItems = useMemo(
     () =>
       menuItems.filter(
-        (item) =>
-          item.isAvailable &&
-          (activeCategory === "All" || item.category === activeCategory),
+        (item) => activeCategory === "All" || item.category === activeCategory,
       ),
     [menuItems, activeCategory],
   );
@@ -135,7 +101,7 @@ export default function CustomerMenu({ token, restaurantId }: Props) {
   const grandTotal = cartTotal + gstAmount;
 
   function addToCart(itemId: string) {
-    const item = menuItems.find((m) => m.id === itemId);
+    const item = payload.menuItems.find((m) => m.id === itemId);
     if (!item) return;
     setCart((prev) => {
       const existing = prev.find((c) => c.menuItemId === itemId);
@@ -172,14 +138,13 @@ export default function CustomerMenu({ token, restaurantId }: Props) {
       toast.error("Your cart is empty!");
       return;
     }
-    if (!table) return;
 
     if (addingMore && activeOrder) {
       addItemsToOrder(activeOrder.id, cart);
       setPlacedOrderId(activeOrder.id);
       toast.success("Items added to your order!");
     } else {
-      const order = placeOrder(table.id, table.tableNumber, cart);
+      const order = placeOrder(payload.tableId, payload.tableNumber, cart);
       setPlacedOrderId(order.id);
       toast.success("Order placed successfully!");
     }
@@ -189,38 +154,6 @@ export default function CustomerMenu({ token, restaurantId }: Props) {
     setView("confirmation");
   }
 
-  // Show loading spinner while Zustand is hydrating from localStorage,
-  // OR while the grace period hasn't elapsed yet (prevents false "Not Found")
-  if (!sellerHydrated || (!restaurant && !readyToShowError)) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center p-4">
-        <div className="text-center max-w-sm">
-          <Loader2 className="w-10 h-10 text-primary animate-spin mx-auto mb-4" />
-          <p className="text-muted-foreground">Loading menu...</p>
-        </div>
-      </div>
-    );
-  }
-
-  // Invalid QR (restaurant not found in seller records, after full grace period)
-  if (!restaurant) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center p-4">
-        <div className="text-center max-w-sm">
-          <div className="text-6xl mb-4">⚠️</div>
-          <h2 className="text-2xl font-display font-bold text-foreground mb-2">
-            Restaurant Not Found
-          </h2>
-          <p className="text-muted-foreground">
-            This QR code does not match any registered restaurant. Please ask
-            staff for a new QR code.
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  // Service suspended screen
   if (isSuspended) {
     return (
       <div className="min-h-screen bg-gray-950 flex items-center justify-center p-4">
@@ -241,25 +174,7 @@ export default function CustomerMenu({ token, restaurantId }: Props) {
     );
   }
 
-  // Table not found — token may be stale (e.g. QR regenerated after payment)
-  if (!table) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center p-4">
-        <div className="text-center max-w-sm">
-          <div className="text-6xl mb-4">⚠️</div>
-          <h2 className="text-2xl font-display font-bold text-foreground mb-2">
-            QR Code Expired
-          </h2>
-          <p className="text-muted-foreground">
-            This QR code has expired or been reset. Please ask staff for the
-            latest QR code for your table.
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  // Options screen (table has active order)
+  // Options screen (active order exists)
   if (view === "options") {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-4">
@@ -268,17 +183,17 @@ export default function CustomerMenu({ token, restaurantId }: Props) {
             <UtensilsCrossed className="w-8 h-8 text-primary" />
           </div>
           <h2 className="text-2xl font-display font-bold text-foreground mb-1">
-            {table.tableNumber}
+            {payload.tableNumber}
           </h2>
           <p className="text-sm text-muted-foreground mb-0.5">
-            {restaurant.name}
+            {payload.restaurantName}
           </p>
           <p className="text-muted-foreground mb-8">
             You have an active order at this table
           </p>
           <div className="space-y-3">
             <Button
-              className="w-full h-12 text-base font-semibold bg-primary hover:bg-primary/90 text-white shadow-primary"
+              className="w-full h-12 text-base font-semibold bg-primary hover:bg-primary/90 text-white"
               onClick={() => {
                 setAddingMore(true);
                 setView("menu");
@@ -339,11 +254,11 @@ export default function CustomerMenu({ token, restaurantId }: Props) {
             </div>
             <div>
               <h1 className="font-display font-bold text-foreground">
-                {restaurant.name}
+                {payload.restaurantName}
               </h1>
             </div>
             <Badge variant="secondary" className="ml-auto text-xs">
-              {table.tableNumber}
+              {payload.tableNumber}
             </Badge>
           </div>
         </header>
@@ -412,17 +327,15 @@ export default function CustomerMenu({ token, restaurantId }: Props) {
             </div>
           )}
 
-          <div className="space-y-3">
-            <Button
-              className="w-full h-12 bg-primary hover:bg-primary/90 text-white font-semibold"
-              onClick={() => {
-                setAddingMore(true);
-                setView("menu");
-              }}
-            >
-              ➕ Add More Items
-            </Button>
-          </div>
+          <Button
+            className="w-full h-12 bg-primary hover:bg-primary/90 text-white font-semibold"
+            onClick={() => {
+              setAddingMore(true);
+              setView("menu");
+            }}
+          >
+            ➕ Add More Items
+          </Button>
         </div>
       </div>
     );
@@ -431,7 +344,6 @@ export default function CustomerMenu({ token, restaurantId }: Props) {
   // Main Menu View
   return (
     <div className="min-h-screen bg-background pb-28">
-      {/* Header */}
       <header className="sticky top-0 z-40 bg-white/90 backdrop-blur border-b border-border">
         <div className="px-4 py-3 flex items-center gap-3">
           <div className="w-9 h-9 rounded-xl bg-primary flex items-center justify-center shadow-primary">
@@ -439,12 +351,12 @@ export default function CustomerMenu({ token, restaurantId }: Props) {
           </div>
           <div>
             <h1 className="font-display font-bold text-foreground leading-tight">
-              {restaurant.name}
+              {payload.restaurantName}
             </h1>
             <p className="text-xs text-muted-foreground">Digital Menu</p>
           </div>
           <Badge className="ml-auto bg-primary/10 text-primary border-primary/20 text-xs">
-            {table.tableNumber}
+            {payload.tableNumber}
           </Badge>
         </div>
         {/* Category Tabs */}
@@ -466,7 +378,6 @@ export default function CustomerMenu({ token, restaurantId }: Props) {
         </div>
       </header>
 
-      {/* Menu Items */}
       <main className="px-4 py-4 max-w-2xl mx-auto space-y-3">
         {filteredItems.length === 0 ? (
           <div className="text-center py-16">
@@ -585,8 +496,7 @@ export default function CustomerMenu({ token, restaurantId }: Props) {
             {/* Cart Header */}
             <div className="flex items-center justify-between p-5 pb-3">
               <h3 className="font-display font-bold text-lg text-foreground flex items-center gap-2">
-                <ShoppingCart className="w-5 h-5 text-primary" />
-                Your Cart
+                <ShoppingCart className="w-5 h-5 text-primary" /> Your Cart
               </h3>
               <button
                 type="button"
@@ -665,6 +575,166 @@ export default function CustomerMenu({ token, restaurantId }: Props) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * MenuPayloadLoader — the main QR loader.
+ * Decodes the ?d= parameter which contains the full menu embedded in the URL.
+ * Works on ANY device without requiring localStorage.
+ */
+function MenuPayloadLoader({ encodedPayload }: { encodedPayload: string }) {
+  const compact = useMemo(
+    () => decodeCompactMenu(encodedPayload),
+    [encodedPayload],
+  );
+
+  if (!compact) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center p-4">
+        <div className="text-center max-w-sm">
+          <div className="text-6xl mb-4">⚠️</div>
+          <h2 className="text-2xl font-display font-bold text-foreground mb-2">
+            Invalid QR Code
+          </h2>
+          <p className="text-muted-foreground">
+            This QR code could not be read. Please ask staff for a new QR code
+            at your table.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  const payload = compactToQRPayload(compact);
+  return <CustomerMenuInner payload={payload} />;
+}
+
+function LegacyQRLoader({ qrParam }: { qrParam: string }) {
+  const payload = useMemo(() => decodeQRPayload(qrParam), [qrParam]);
+
+  if (!payload) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center p-4">
+        <div className="text-center max-w-sm">
+          <div className="text-6xl mb-4">⚠️</div>
+          <h2 className="text-2xl font-display font-bold text-foreground mb-2">
+            Invalid QR Code
+          </h2>
+          <p className="text-muted-foreground">
+            This QR code is not valid. Please ask staff for the correct QR code
+            for your table.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return <CustomerMenuInner payload={payload} />;
+}
+
+function CompactQRLoader({
+  restaurantId,
+  tableId,
+}: {
+  restaurantId: string;
+  tableId: string;
+}) {
+  const [payload, setPayload] = useState<QRPayload | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const { tables } = useRestaurantStore(restaurantId);
+
+  useEffect(() => {
+    // Try to load menu snapshot from localStorage (saved by admin on same origin)
+    const snapshot = loadMenuSnapshot(restaurantId);
+    if (snapshot) {
+      // Find table info from the restaurant data store
+      const tableObj = tables.find((t) => t.id === tableId);
+
+      const tableNumber = tableObj?.tableNumber ?? "Table";
+      const sessionToken = tableObj?.sessionToken ?? tableId;
+
+      setPayload({
+        restaurantId,
+        restaurantName: snapshot.restaurantName,
+        tableId,
+        tableNumber,
+        sessionToken,
+        gstPercent: snapshot.gstPercent,
+        menuItems: snapshot.menuItems,
+      });
+    }
+    setLoading(false);
+  }, [restaurantId, tableId, tables]);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+          <p className="text-muted-foreground text-sm">Loading menu...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!payload) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center p-4">
+        <div className="text-center max-w-sm">
+          <div className="text-6xl mb-4">⚠️</div>
+          <h2 className="text-2xl font-display font-bold text-foreground mb-2">
+            Menu Not Available
+          </h2>
+          <p className="text-muted-foreground">
+            The menu could not be loaded. Please ask a staff member to open the
+            Admin Panel and go to <strong>Tables &amp; QR</strong> to refresh
+            the menu, then scan again.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return <CustomerMenuInner payload={payload} />;
+}
+
+export default function CustomerMenu({
+  menuPayload,
+  restaurantId,
+  tableId,
+  qrParam,
+}: Props) {
+  // PRIMARY format: ?d=BASE64 — menu fully embedded in URL, works on any device
+  if (menuPayload) {
+    return <MenuPayloadLoader encodedPayload={menuPayload} />;
+  }
+
+  // Legacy compact format: restaurantId + tableId (needs localStorage on same device)
+  if (restaurantId && tableId) {
+    return <CompactQRLoader restaurantId={restaurantId} tableId={tableId} />;
+  }
+
+  // Legacy base64 format
+  if (qrParam) {
+    return <LegacyQRLoader qrParam={qrParam} />;
+  }
+
+  // No valid params
+  return (
+    <div className="min-h-screen bg-background flex items-center justify-center p-4">
+      <div className="text-center max-w-sm">
+        <div className="text-6xl mb-4">⚠️</div>
+        <h2 className="text-2xl font-display font-bold text-foreground mb-2">
+          Invalid QR Code
+        </h2>
+        <p className="text-muted-foreground">
+          This QR code is not valid. Please ask staff for the correct QR code
+          for your table.
+        </p>
+      </div>
     </div>
   );
 }

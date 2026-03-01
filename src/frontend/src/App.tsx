@@ -26,13 +26,28 @@ function getPageFromHash(): PageView {
   return "home";
 }
 
-function getTableToken(): string | null {
-  const params = new URLSearchParams(window.location.search);
-  return params.get("table");
+function getQRParam(): string | null {
+  return new URLSearchParams(window.location.search).get("qr");
 }
 
-function getRestaurantIdFromUrl(): string | null {
-  return new URLSearchParams(window.location.search).get("rid");
+/** New format: ?d=BASE64_ENCODED_COMPACT_MENU — menu embedded in URL */
+function getMenuPayloadParam(): string | null {
+  return new URLSearchParams(window.location.search).get("d");
+}
+
+function getCompactQRParams(): {
+  restaurantId: string;
+  tableId: string;
+} | null {
+  const params = new URLSearchParams(window.location.search);
+  const r = params.get("r");
+  const t = params.get("t");
+  if (r && t) return { restaurantId: r, tableId: t };
+  return null;
+}
+
+function getLegacyTableToken(): string | null {
+  return new URLSearchParams(window.location.search).get("table");
 }
 
 export default function App() {
@@ -41,14 +56,15 @@ export default function App() {
     null,
   );
 
-  const tableToken = getTableToken();
-  const urlRestaurantId = getRestaurantIdFromUrl();
+  const qrParam = getQRParam();
+  const menuPayload = getMenuPayloadParam();
+  const compactQR = getCompactQRParams();
+  const legacyTableToken = getLegacyTableToken();
 
   useEffect(() => {
     const handleHashChange = () => {
       const newPage = getPageFromHash();
       setPage(newPage);
-      // If navigating away from a dashboard page via hash, clear restaurant context
       if (newPage === "home") {
         setCurrentRestaurantId(null);
       }
@@ -64,14 +80,9 @@ export default function App() {
 
   function handleRestaurantLoginSuccess(restaurantId: string, role: UserRole) {
     setCurrentRestaurantId(restaurantId);
-    // Navigate to the right dashboard
-    if (role === "admin") {
-      navigate("admin");
-    } else if (role === "kitchen") {
-      navigate("kitchen");
-    } else if (role === "billing") {
-      navigate("billing");
-    }
+    if (role === "admin") navigate("admin");
+    else if (role === "kitchen") navigate("kitchen");
+    else if (role === "billing") navigate("billing");
   }
 
   function handleLogout() {
@@ -79,29 +90,52 @@ export default function App() {
     navigate("home");
   }
 
-  // If URL has ?table=TOKEN&rid=RESTAURANT_ID → show customer menu
-  if (tableToken && urlRestaurantId) {
+  // NEW format: ?d=BASE64_COMPACT_MENU — menu fully embedded in URL, works on any device
+  if (menuPayload) {
     return (
       <>
-        <CustomerMenu token={tableToken} restaurantId={urlRestaurantId} />
+        <CustomerMenu menuPayload={menuPayload} />
         <Toaster richColors position="top-center" />
       </>
     );
   }
 
-  // Legacy support: if only table token (no rid), show invalid QR
-  if (tableToken && !urlRestaurantId) {
+  // Legacy compact QR format: ?r=RESTAURANT_ID&t=TABLE_ID (old format, needs localStorage)
+  if (compactQR) {
+    return (
+      <>
+        <CustomerMenu
+          restaurantId={compactQR.restaurantId}
+          tableId={compactQR.tableId}
+        />
+        <Toaster richColors position="top-center" />
+      </>
+    );
+  }
+
+  // Old base64 QR format: ?qr=BASE64_PAYLOAD (legacy, keep for backwards compat)
+  if (qrParam) {
+    return (
+      <>
+        <CustomerMenu qrParam={qrParam} />
+        <Toaster richColors position="top-center" />
+      </>
+    );
+  }
+
+  // Legacy QR format: ?table=TOKEN (very old)
+  if (legacyTableToken) {
     return (
       <>
         <div className="min-h-screen bg-background flex items-center justify-center p-4">
           <div className="text-center max-w-sm">
             <div className="text-6xl mb-4">❌</div>
             <h2 className="text-2xl font-display font-bold text-foreground mb-2">
-              Invalid QR Code
+              QR Code Outdated
             </h2>
             <p className="text-muted-foreground">
-              This QR code is outdated. Please ask for a new QR code at your
-              table.
+              This QR code is outdated. Please ask staff for a new QR code at
+              your table.
             </p>
           </div>
         </div>
@@ -115,7 +149,6 @@ export default function App() {
     (page === "admin" || page === "kitchen" || page === "billing") &&
     !currentRestaurantId
   ) {
-    // Not authenticated — redirect to restaurant login
     return (
       <>
         <RestaurantLogin

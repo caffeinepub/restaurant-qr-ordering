@@ -86,3 +86,13 @@ export interface Restaurant {
   createdAt: number;
   pins?: RestaurantPins;
 }
+
+export interface QRPayload {
+  restaurantId: string;
+  restaurantName: string;
+  tableId: string;
+  tableNumber: string;
+  sessionToken: string;
+  gstPercent: number;
+  menuItems: MenuItem[];
+}
