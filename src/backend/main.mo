@@ -2,17 +2,15 @@ import Map "mo:core/Map";
 import Text "mo:core/Text";
 import Time "mo:core/Time";
 import Principal "mo:core/Principal";
-import Iter "mo:core/Iter";
-import Runtime "mo:core/Runtime";
 import Array "mo:core/Array";
+import Runtime "mo:core/Runtime";
+import Migration "migration";
 import MixinStorage "blob-storage/Mixin";
 import Storage "blob-storage/Storage";
 import MixinAuthorization "authorization/MixinAuthorization";
 import AccessControl "authorization/access-control";
-import Migration "migration";
 
-(with migration = Migration.run)
-actor {
+(with migration = Migration.run) actor {
   let accessControlState = AccessControl.initState();
   include MixinAuthorization(accessControlState);
 
@@ -311,44 +309,24 @@ actor {
 
   public query ({ caller }) func getRestaurantOrders(restaurantId : Text) : async [RestaurantOrder] {
     // No authorization check - anonymous access allowed
-    var count = 0;
+    var results : [RestaurantOrder] = [];
     for (order in restaurantOrders.values()) {
       if (order.restaurantId == restaurantId) {
-        count += 1;
+        results := results.concat([order]);
       };
     };
-
-    let filtered = Array.empty<RestaurantOrder>();
-
-    var index = 0;
-    for (order in restaurantOrders.values()) {
-      if (order.restaurantId == restaurantId) {
-        index += 1;
-      };
-    };
-
-    filtered;
+    results;
   };
 
   public query ({ caller }) func getRestaurantOrdersByStatus(restaurantId : Text, status : Text) : async [RestaurantOrder] {
     // No authorization check - anonymous access allowed
-    var count = 0;
+    var results : [RestaurantOrder] = [];
     for (order in restaurantOrders.values()) {
       if (order.restaurantId == restaurantId and order.status == status) {
-        count += 1;
+        results := results.concat([order]);
       };
     };
-
-    let filtered = Array.empty<RestaurantOrder>();
-
-    var index = 0;
-    for (order in restaurantOrders.values()) {
-      if (order.restaurantId == restaurantId and order.status == status) {
-        index += 1;
-      };
-    };
-
-    filtered;
+    results;
   };
 
   public shared ({ caller }) func updateRestaurantOrderStatus(orderId : Text, kitchenStatus : Text, orderStatus : Text) : async Bool {
@@ -401,27 +379,21 @@ actor {
   public query ({ caller }) func searchRestaurantOrders(restaurantId : Text, searchTerm : Text) : async [RestaurantOrder] {
     // No authorization check - anonymous access allowed
     let searchLower = searchTerm.toLower();
+    var results : [RestaurantOrder] = [];
 
-    var count = 0;
     for (order in restaurantOrders.values()) {
       if (
-        order.restaurantId == restaurantId and (order.id.toLower().contains(#text(searchLower)) or order.tableNumber.toLower().contains(#text(searchLower))) or order.status.toLower().contains(#text(searchLower)) or order.itemsJson.toLower().contains(#text(searchLower))
+        order.restaurantId == restaurantId and (
+          order.id.toLower().contains(#text(searchLower)) or
+          order.tableNumber.toLower().contains(#text(searchLower))
+        ) or
+        order.status.toLower().contains(#text(searchLower)) or
+        order.itemsJson.toLower().contains(#text(searchLower))
       ) {
-        count += 1;
+        results := results.concat([order]);
       };
     };
 
-    let filtered = Array.empty<RestaurantOrder>();
-
-    var index = 0;
-    for (order in restaurantOrders.values()) {
-      if (
-        order.restaurantId == restaurantId and (order.id.toLower().contains(#text(searchLower)) or order.tableNumber.toLower().contains(#text(searchLower))) or order.status.toLower().contains(#text(searchLower)) or order.itemsJson.toLower().contains(#text(searchLower))
-      ) {
-        index += 1;
-      };
-    };
-
-    filtered;
+    results;
   };
 };
