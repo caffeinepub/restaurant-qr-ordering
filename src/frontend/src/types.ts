@@ -40,10 +40,12 @@ export interface Order {
   status: OrderStatus;
   kitchenStatus: "pending" | "preparing" | "ready" | "delivered";
   createdAt: number;
+  billRequested?: boolean;
 }
 
 export interface Bill {
   id: string;
+  billNumber: number;
   orderId: string;
   tableId: string;
   tableNumber: string;
@@ -51,11 +53,26 @@ export interface Bill {
   subtotal: number;
   gstPercent: number;
   gstAmount: number;
+  serviceChargePercent: number;
+  serviceChargeAmount: number;
   grandTotal: number;
   paymentMethod: "Cash" | "UPI" | "Card" | null;
   isPaid: boolean;
   createdAt: number;
   paidAt: number | null;
+}
+
+export interface BillSettings {
+  restaurantName: string;
+  address: string;
+  phone: string;
+  gstin: string;
+  gstPercent: number;
+  serviceChargePercent: number;
+  thankYouMessage: string;
+  billNumberPrefix: number; // daily reset start (e.g. 1001)
+  currentBillNumber: number;
+  lastResetDate: string; // ISO date string YYYY-MM-DD
 }
 
 export type UserRole = "admin" | "kitchen" | "billing" | null;
@@ -67,6 +84,7 @@ export interface AppState {
   bills: Bill[];
   gstPercent: number;
   userRole: UserRole;
+  billSettings: BillSettings;
 }
 
 export interface RestaurantPins {

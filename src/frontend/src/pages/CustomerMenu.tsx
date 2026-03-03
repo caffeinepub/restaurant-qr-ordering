@@ -47,9 +47,8 @@ type FilterCategory = (typeof ALL_CATEGORIES)[number];
 
 // Inner component that uses the decoded payload — restaurantId is known at this point
 function CustomerMenuInner({ payload }: { payload: QRPayload }) {
-  const { orders, placeOrder, addItemsToOrder } = useRestaurantStore(
-    payload.restaurantId,
-  );
+  const { orders, placeOrder, addItemsToOrder, requestBill } =
+    useRestaurantStore(payload.restaurantId);
   const { actor } = useActor();
   const sellerRestaurants = useSellerStore((s) => s.restaurants);
 
@@ -67,6 +66,7 @@ function CustomerMenuInner({ payload }: { payload: QRPayload }) {
   const [view, setView] = useState<CustomerView>("menu");
   const [placedOrderId, setPlacedOrderId] = useState<string | null>(null);
   const [addingMore, setAddingMore] = useState(false);
+  const [billRequestSent, setBillRequestSent] = useState(false);
   const initialViewSet = useRef(false);
 
   // Find active order by tableId (not sessionToken — we have tableId in payload now)
@@ -357,6 +357,37 @@ function CustomerMenuInner({ payload }: { payload: QRPayload }) {
               </div>
             </div>
           )}
+
+          {/* Request Bill Button */}
+          {confirmedOrder &&
+            (billRequestSent ? (
+              <div
+                className="w-full h-12 flex items-center justify-center gap-2 rounded-xl bg-green-50 border border-green-200 text-green-700 font-semibold text-sm mb-3"
+                data-ocid="customer.success_state"
+              >
+                <CheckCircle className="w-4 h-4" />
+                Bill request sent to counter
+              </div>
+            ) : (
+              <Button
+                className="w-full h-12 bg-amber-500 hover:bg-amber-600 text-white font-semibold mb-3"
+                data-ocid="customer.primary_button"
+                onClick={() => {
+                  requestBill(confirmedOrder.id);
+                  // Sync the bill-requested status to backend
+                  if (actor) {
+                    syncOrderToBackend(actor, payload.restaurantId, {
+                      ...confirmedOrder,
+                      billRequested: true,
+                    });
+                  }
+                  setBillRequestSent(true);
+                  toast.success("Bill request sent to billing counter!");
+                }}
+              >
+                🧾 Request Bill
+              </Button>
+            ))}
 
           <Button
             className="w-full h-12 bg-primary hover:bg-primary/90 text-white font-semibold"
