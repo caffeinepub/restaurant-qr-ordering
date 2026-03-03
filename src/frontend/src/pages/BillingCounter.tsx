@@ -16,7 +16,11 @@ import { useRestaurantStore } from "../restaurantDataStore";
 import { useSellerStore } from "../sellerStore";
 import type { Bill, Order } from "../types";
 import { printBill } from "../utils/billPrint";
-import { fetchOrdersFromBackend, mergeOrders } from "../utils/orderSync";
+import {
+  fetchOrdersFromBackend,
+  mergeOrders,
+  updateOrderStatusOnBackend,
+} from "../utils/orderSync";
 
 interface Props {
   restaurantId: string;
@@ -32,6 +36,7 @@ export default function BillingCounter({ restaurantId, onLogout }: Props) {
     billSettings,
     generateBill,
     processPayment,
+    resetTableSession,
   } = useRestaurantStore(restaurantId);
 
   const { actor } = useActor();
@@ -55,9 +60,10 @@ export default function BillingCounter({ restaurantId, onLogout }: Props) {
         actorRef.current,
         restaurantId,
       );
-      if (fetched.length > 0) {
-        setBackendOrders(fetched);
-      }
+      // Only keep active/billed/pending orders from backend — ignore paid ones
+      // (paid orders are tracked in local bills store)
+      const activeOnly = fetched.filter((o) => o.status !== "paid");
+      setBackendOrders(activeOnly);
     }
 
     poll();
@@ -197,9 +203,13 @@ export default function BillingCounter({ restaurantId, onLogout }: Props) {
   function handleProcessPayment() {
     if (!selectedBill || !paymentMethod) return;
 
+    const billTableId = selectedBill.tableId;
+    const billOrderId = selectedBill.orderId;
+
     // Check if bill is in local store
     const isLocalBill = bills.find((b) => b.id === selectedBill.id);
     if (isLocalBill) {
+      // processPayment already resets the table session in local store
       processPayment(selectedBill.id, paymentMethod);
     } else {
       // Mark the ad-hoc generated bill as paid
@@ -209,6 +219,23 @@ export default function BillingCounter({ restaurantId, onLogout }: Props) {
             ? { ...b, isPaid: true, paymentMethod, paidAt: Date.now() }
             : b,
         ),
+      );
+      // Reset the table session for backend-only orders too
+      resetTableSession(billTableId);
+      // Also clear backend orders state for this table
+      setBackendOrders((prev) =>
+        prev.map((o) => (o.id === billOrderId ? { ...o, status: "paid" } : o)),
+      );
+    }
+
+    // CRITICAL: Sync paid status to backend so customer's phone no longer sees
+    // an active order when they re-scan the QR code.
+    if (actorRef.current) {
+      updateOrderStatusOnBackend(
+        actorRef.current,
+        billOrderId,
+        "delivered",
+        "paid",
       );
     }
 
