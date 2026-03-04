@@ -34,7 +34,7 @@ interface Props {
   qrParam?: string;
 }
 
-type CustomerView = "menu" | "confirmation" | "options" | "bill";
+type CustomerView = "menu" | "confirmation" | "options";
 
 const CATEGORIES: MenuCategory[] = [
   "Starters",
@@ -70,12 +70,9 @@ function CustomerMenuInner({ payload }: { payload: QRPayload }) {
   const initialViewSet = useRef(false);
 
   // Find active order by tableId (not sessionToken — we have tableId in payload now)
-  // Only consider orders that are truly active (not paid/billed)
   const activeOrder =
     orders.find(
-      (o) =>
-        o.tableId === payload.tableId &&
-        (o.status === "active" || o.status === "billed"),
+      (o) => o.tableId === payload.tableId && o.status === "active",
     ) ?? null;
 
   // Determine initial view once
@@ -89,19 +86,6 @@ function CustomerMenuInner({ payload }: { payload: QRPayload }) {
       }
     }
   }, [activeOrder]);
-
-  // If the active order disappears (billing processed payment and reset the table),
-  // redirect any lingering options/bill/confirmation screen to menu
-  // so the next customer who scans sees the menu directly
-  useEffect(() => {
-    if (
-      !activeOrder &&
-      (view === "options" || view === "bill") &&
-      !placedOrderId
-    ) {
-      setView("menu");
-    }
-  }, [activeOrder, view, placedOrderId]);
 
   const menuItems = payload.menuItems.filter((item) => item.isAvailable);
   const gstPercent = payload.gstPercent;
@@ -223,12 +207,6 @@ function CustomerMenuInner({ payload }: { payload: QRPayload }) {
 
   // Options screen (active order exists)
   if (view === "options") {
-    const orderSubtotal = activeOrder
-      ? activeOrder.items.reduce((s, i) => s + i.price * i.quantity, 0)
-      : 0;
-    const orderGst = Math.round(orderSubtotal * (gstPercent / 100));
-    const orderTotal = orderSubtotal + orderGst;
-
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-4">
         <div className="text-center max-w-sm w-full">
@@ -241,7 +219,7 @@ function CustomerMenuInner({ payload }: { payload: QRPayload }) {
           <p className="text-sm text-muted-foreground mb-0.5">
             {payload.restaurantName}
           </p>
-          <p className="text-muted-foreground mb-6">
+          <p className="text-muted-foreground mb-8">
             You have an active order at this table
           </p>
           <div className="space-y-3">
@@ -256,10 +234,10 @@ function CustomerMenuInner({ payload }: { payload: QRPayload }) {
             </Button>
             <Button
               variant="outline"
-              className="w-full h-12 text-base font-semibold border-amber-300 text-amber-700 hover:bg-amber-50"
-              onClick={() => setView("bill")}
+              className="w-full h-12 text-base font-semibold"
+              onClick={() => setView("confirmation")}
             >
-              🧾 Pay Bill
+              🧾 View/Pay Bill
             </Button>
           </div>
           {activeOrder && (
@@ -285,141 +263,6 @@ function CustomerMenuInner({ payload }: { payload: QRPayload }) {
                   +{activeOrder.items.length - 3} more items
                 </p>
               )}
-              <Separator className="my-2" />
-              <div className="flex justify-between text-sm font-bold text-foreground">
-                <span>Total (incl. GST {gstPercent}%)</span>
-                <span className="text-primary">₹{orderTotal}</span>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  // Bill View — shows full bill breakdown and asks customer to pay at counter
-  if (view === "bill") {
-    const billOrder = activeOrder;
-    const billSub = billOrder
-      ? billOrder.items.reduce((s, i) => s + i.price * i.quantity, 0)
-      : 0;
-    const billGst = Math.round(billSub * (gstPercent / 100));
-    const billTotal = billSub + billGst;
-
-    return (
-      <div className="min-h-screen bg-background">
-        <header className="sticky top-0 z-40 bg-white/90 backdrop-blur border-b border-border">
-          <div className="px-4 py-4 flex items-center gap-3">
-            <button
-              type="button"
-              onClick={() => setView("options")}
-              className="w-8 h-8 rounded-full bg-muted flex items-center justify-center hover:bg-accent"
-            >
-              <X className="w-4 h-4 text-muted-foreground" />
-            </button>
-            <div>
-              <h1 className="font-display font-bold text-foreground">
-                {payload.restaurantName}
-              </h1>
-              <p className="text-xs text-muted-foreground">Your Bill</p>
-            </div>
-            <Badge variant="secondary" className="ml-auto text-xs">
-              {payload.tableNumber}
-            </Badge>
-          </div>
-        </header>
-        <div className="max-w-md mx-auto p-4">
-          {billOrder ? (
-            <>
-              {/* Bill breakdown */}
-              <div className="bg-white rounded-2xl border border-border shadow-card p-5 mb-4">
-                <h3 className="font-semibold text-foreground mb-3 flex items-center gap-2">
-                  <span>🧾</span> Bill Summary
-                </h3>
-                <div className="space-y-2 mb-4">
-                  {billOrder.items.map((item) => (
-                    <div
-                      key={item.menuItemId}
-                      className="flex justify-between text-sm"
-                    >
-                      <span className="text-foreground">
-                        {item.name}{" "}
-                        <span className="text-muted-foreground">
-                          × {item.quantity}
-                        </span>
-                      </span>
-                      <span className="font-medium">
-                        ₹{item.price * item.quantity}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-                <Separator />
-                <div className="mt-3 space-y-1.5">
-                  <div className="flex justify-between text-sm text-muted-foreground">
-                    <span>Subtotal</span>
-                    <span>₹{billSub}</span>
-                  </div>
-                  <div className="flex justify-between text-sm text-muted-foreground">
-                    <span>GST ({gstPercent}%)</span>
-                    <span>₹{billGst}</span>
-                  </div>
-                  <div className="flex justify-between font-bold text-foreground text-base pt-1">
-                    <span>Grand Total</span>
-                    <span className="text-primary text-lg">₹{billTotal}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Request Bill / Pay instruction */}
-              {billRequestSent ? (
-                <div
-                  className="w-full py-4 flex items-center justify-center gap-2 rounded-xl bg-green-50 border border-green-200 text-green-700 font-semibold text-sm mb-3"
-                  data-ocid="customer.success_state"
-                >
-                  <CheckCircle className="w-4 h-4" />
-                  Bill request sent — please pay at the billing counter
-                </div>
-              ) : (
-                <Button
-                  className="w-full h-12 bg-amber-500 hover:bg-amber-600 text-white font-semibold mb-3"
-                  data-ocid="customer.primary_button"
-                  onClick={() => {
-                    requestBill(billOrder.id);
-                    if (actor) {
-                      syncOrderToBackend(actor, payload.restaurantId, {
-                        ...billOrder,
-                        billRequested: true,
-                      });
-                    }
-                    setBillRequestSent(true);
-                    toast.success("Bill request sent to billing counter!");
-                  }}
-                >
-                  🧾 Request Bill at Counter
-                </Button>
-              )}
-
-              <Button
-                variant="outline"
-                className="w-full h-12 font-semibold"
-                onClick={() => {
-                  setAddingMore(true);
-                  setView("menu");
-                }}
-              >
-                ➕ Order More Food
-              </Button>
-            </>
-          ) : (
-            <div className="text-center py-16">
-              <div className="text-5xl mb-3">✅</div>
-              <h3 className="font-display font-bold text-xl text-foreground mb-2">
-                Bill Paid
-              </h3>
-              <p className="text-muted-foreground">
-                Thank you! This table is now available for new customers.
-              </p>
             </div>
           )}
         </div>
@@ -515,16 +358,36 @@ function CustomerMenuInner({ payload }: { payload: QRPayload }) {
             </div>
           )}
 
-          {/* Pay Bill Button */}
-          {confirmedOrder && (
-            <Button
-              className="w-full h-12 bg-amber-500 hover:bg-amber-600 text-white font-semibold mb-3"
-              data-ocid="customer.primary_button"
-              onClick={() => setView("bill")}
-            >
-              🧾 Pay Bill
-            </Button>
-          )}
+          {/* Request Bill Button */}
+          {confirmedOrder &&
+            (billRequestSent ? (
+              <div
+                className="w-full h-12 flex items-center justify-center gap-2 rounded-xl bg-green-50 border border-green-200 text-green-700 font-semibold text-sm mb-3"
+                data-ocid="customer.success_state"
+              >
+                <CheckCircle className="w-4 h-4" />
+                Bill request sent to counter
+              </div>
+            ) : (
+              <Button
+                className="w-full h-12 bg-amber-500 hover:bg-amber-600 text-white font-semibold mb-3"
+                data-ocid="customer.primary_button"
+                onClick={() => {
+                  requestBill(confirmedOrder.id);
+                  // Sync the bill-requested status to backend
+                  if (actor) {
+                    syncOrderToBackend(actor, payload.restaurantId, {
+                      ...confirmedOrder,
+                      billRequested: true,
+                    });
+                  }
+                  setBillRequestSent(true);
+                  toast.success("Bill request sent to billing counter!");
+                }}
+              >
+                🧾 Request Bill
+              </Button>
+            ))}
 
           <Button
             className="w-full h-12 bg-primary hover:bg-primary/90 text-white font-semibold"
@@ -849,31 +712,7 @@ function CompactQRLoader({
         };
       }
 
-      // STEP 1: ?d= URL param — menu baked into the QR at print time.
-      // This works on ANY device, offline, with zero network dependency.
-      // This is the PRIMARY and most reliable method.
-      if (menuData && !cancelled) {
-        const decoded = decodeMenuFromQR(menuData, restaurantId, tableId, tn);
-        if (decoded) {
-          setPayload(decoded);
-          setLoading(false);
-          return;
-        }
-      }
-
-      if (cancelled) return;
-
-      // STEP 2: localStorage snapshot (same browser/device as admin)
-      const snapshot = loadMenuSnapshot(restaurantId);
-      if (snapshot && !cancelled) {
-        setPayload(buildPayload(snapshot));
-        setLoading(false);
-        return;
-      }
-
-      if (cancelled) return;
-
-      // STEP 3: ICP canister — works cross-device but requires network
+      // STEP 1: Try ICP canister — no auth required, works on any device
       const tryCanister = async () => {
         const currentActor = actorRef.current;
         if (!currentActor) return false;
@@ -891,19 +730,37 @@ function CompactQRLoader({
       };
 
       // Wait for actor to be ready (it initialises asynchronously)
-      for (let i = 0; i < 10 && !actorRef.current; i++) {
-        await new Promise<void>((r) => setTimeout(r, 500));
-        if (cancelled) return;
+      let actorReady = !!actorRef.current;
+      if (!actorReady) {
+        // Wait up to 3 seconds for actor
+        for (let i = 0; i < 6 && !actorRef.current; i++) {
+          await new Promise<void>((r) => setTimeout(r, 500));
+        }
+        actorReady = !!actorRef.current;
       }
 
-      if (!cancelled && actorRef.current) {
-        for (let attempt = 0; attempt < 2; attempt++) {
-          if (cancelled) return;
-          const ok = await tryCanister();
-          if (ok) return;
-          if (attempt < 1) {
-            await new Promise<void>((r) => setTimeout(r, 1500));
-          }
+      if (!cancelled && actorReady) {
+        const ok = await tryCanister();
+        if (ok) return;
+      }
+
+      if (cancelled) return;
+
+      // STEP 2: localStorage snapshot (same browser where admin logged in)
+      const snapshot = loadMenuSnapshot(restaurantId);
+      if (snapshot && !cancelled) {
+        setPayload(buildPayload(snapshot));
+        setLoading(false);
+        return;
+      }
+
+      // STEP 3: Legacy ?d= URL param (old QR codes with embedded menu)
+      if (menuData && !cancelled) {
+        const decoded = decodeMenuFromQR(menuData, restaurantId, tableId, tn);
+        if (decoded) {
+          setPayload(decoded);
+          setLoading(false);
+          return;
         }
       }
 
@@ -936,19 +793,11 @@ function CompactQRLoader({
           <h2 className="text-2xl font-display font-bold text-foreground mb-2">
             Menu Not Available
           </h2>
-          <p className="text-muted-foreground text-sm leading-relaxed mb-4">
-            The menu could not be loaded. Please ask restaurant staff to open
-            the <strong>Admin Panel</strong> and go to{" "}
-            <strong>Tables &amp; QR</strong> once — this saves the menu. Then
-            scan again.
+          <p className="text-muted-foreground text-sm leading-relaxed">
+            The menu could not be loaded. Please ask the restaurant staff to
+            open their <strong>Admin Panel</strong> once — this saves the menu
+            to the cloud. Then scan the QR code again.
           </p>
-          <button
-            type="button"
-            onClick={() => window.location.reload()}
-            className="px-6 py-2 rounded-full bg-primary text-white text-sm font-semibold hover:bg-primary/90 transition-colors"
-          >
-            Try Again
-          </button>
         </div>
       </div>
     );

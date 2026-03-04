@@ -56,21 +56,8 @@ export async function fetchMenuFromBackend(
   restaurantId: string,
 ): Promise<MenuSyncPayload | null> {
   try {
-    const raw = await actor.getMenuSnapshot(restaurantId);
-    // IC optionals can be returned as null, undefined, or an array [value]/[]
-    // Handle all forms safely
-    let result: { menuJson: string } | null = null;
-    if (!raw) {
-      result = null;
-    } else if (Array.isArray(raw)) {
-      // IC array-wrapped optional: [] = null, [snapshot] = value
-      result = (raw as Array<{ menuJson: string }>)[0] ?? null;
-    } else {
-      result = raw as { menuJson: string };
-    }
-
-    if (!result || !result.menuJson) return null;
-
+    const result = await actor.getMenuSnapshot(restaurantId);
+    if (!result) return null;
     try {
       const payload = JSON.parse(result.menuJson) as MenuSyncPayload;
       if (
