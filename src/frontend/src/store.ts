@@ -3,7 +3,6 @@ import { persist } from "zustand/middleware";
 import type {
   AppState,
   Bill,
-  BillSettings,
   CartItem,
   MenuItem,
   Order,
@@ -57,18 +56,6 @@ export const useStore = create<Store>()(
       bills: [],
       gstPercent: 18,
       userRole: null,
-      billSettings: {
-        restaurantName: "",
-        address: "",
-        phone: "",
-        gstin: "",
-        gstPercent: 18,
-        serviceChargePercent: 0,
-        thankYouMessage: "Thank You! Please Visit Again!",
-        billNumberPrefix: 1001,
-        currentBillNumber: 1001,
-        lastResetDate: new Date().toISOString().split("T")[0],
-      },
 
       login: (role) => set({ userRole: role }),
       logout: () => set({ userRole: null }),
@@ -206,7 +193,6 @@ export const useStore = create<Store>()(
 
         const bill: Bill = {
           id: crypto.randomUUID(),
-          billNumber: 1001,
           orderId,
           tableId: order.tableId,
           tableNumber: order.tableNumber,
@@ -214,8 +200,6 @@ export const useStore = create<Store>()(
           subtotal,
           gstPercent: state.gstPercent,
           gstAmount,
-          serviceChargePercent: 0,
-          serviceChargeAmount: 0,
           grandTotal,
           paymentMethod: null,
           isPaid: false,

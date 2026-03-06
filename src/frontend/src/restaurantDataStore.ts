@@ -5,7 +5,6 @@ import { persist } from "zustand/middleware";
 import type {
   AppState,
   Bill,
-  BillSettings,
   CartItem,
   MenuItem,
   Order,
@@ -49,10 +48,6 @@ interface RestaurantStore extends AppState {
   // Bills
   generateBill: (orderId: string) => Bill;
   processPayment: (billId: string, method: "Cash" | "UPI" | "Card") => void;
-  requestBill: (orderId: string) => void;
-
-  // Bill Settings
-  updateBillSettings: (settings: Partial<BillSettings>) => void;
 
   // GST
   updateGST: (percent: number) => void;
@@ -68,19 +63,6 @@ type InitialRestaurantState = AppState & { _hasHydrated: boolean };
 function getInitialRestaurantState(
   restaurantId: string,
 ): InitialRestaurantState {
-  const defaultBillSettings: BillSettings = {
-    restaurantName: "",
-    address: "",
-    phone: "",
-    gstin: "",
-    gstPercent: 18,
-    serviceChargePercent: 0,
-    thankYouMessage: "Thank You! Please Visit Again!",
-    billNumberPrefix: 1001,
-    currentBillNumber: 1001,
-    lastResetDate: new Date().toISOString().split("T")[0],
-  };
-
   const defaults: InitialRestaurantState = {
     menuItems: [],
     tables: [],
@@ -88,7 +70,6 @@ function getInitialRestaurantState(
     bills: [],
     gstPercent: 18,
     userRole: null,
-    billSettings: defaultBillSettings,
     _hasHydrated: false,
   };
   try {
@@ -97,18 +78,6 @@ function getInitialRestaurantState(
       const parsed = JSON.parse(raw);
       const state = parsed?.state;
       if (state) {
-        const defaultBillSettings: BillSettings = {
-          restaurantName: "",
-          address: "",
-          phone: "",
-          gstin: "",
-          gstPercent: state.gstPercent ?? 18,
-          serviceChargePercent: 0,
-          thankYouMessage: "Thank You! Please Visit Again!",
-          billNumberPrefix: 1001,
-          currentBillNumber: 1001,
-          lastResetDate: new Date().toISOString().split("T")[0],
-        };
         return {
           menuItems: state.menuItems ?? [],
           tables: state.tables ?? [],
@@ -116,9 +85,6 @@ function getInitialRestaurantState(
           bills: state.bills ?? [],
           gstPercent: state.gstPercent ?? 18,
           userRole: state.userRole ?? null,
-          billSettings: state.billSettings
-            ? { ...defaultBillSettings, ...state.billSettings }
-            : defaultBillSettings,
           _hasHydrated: true,
         };
       }
@@ -146,9 +112,6 @@ function syncFromStorage(
       orders: state.orders ?? prev.orders,
       bills: state.bills ?? prev.bills,
       gstPercent: state.gstPercent ?? prev.gstPercent,
-      billSettings: state.billSettings
-        ? { ...prev.billSettings, ...state.billSettings }
-        : prev.billSettings,
       _hasHydrated: true,
     }));
   } catch {
@@ -303,40 +266,18 @@ function createRestaurantStore(
             (sum, i) => sum + i.price * i.quantity,
             0,
           );
-          const gstPct = state.billSettings?.gstPercent ?? state.gstPercent;
-          const serviceChargePct =
-            state.billSettings?.serviceChargePercent ?? 0;
-          const gstAmount = Math.round(subtotal * (gstPct / 100));
-          const serviceChargeAmount = Math.round(
-            subtotal * (serviceChargePct / 100),
-          );
-          const grandTotal = subtotal + gstAmount + serviceChargeAmount;
-
-          // Compute next bill number (reset daily)
-          const todayStr = new Date().toISOString().split("T")[0];
-          const settings = state.billSettings;
-          let billNumber = settings?.currentBillNumber ?? 1001;
-          let nextBillNumber = billNumber + 1;
-          let lastResetDate = settings?.lastResetDate ?? todayStr;
-          if (lastResetDate !== todayStr) {
-            // New day — reset
-            billNumber = settings?.billNumberPrefix ?? 1001;
-            nextBillNumber = billNumber + 1;
-            lastResetDate = todayStr;
-          }
+          const gstAmount = Math.round(subtotal * (state.gstPercent / 100));
+          const grandTotal = subtotal + gstAmount;
 
           const bill: Bill = {
             id: crypto.randomUUID(),
-            billNumber,
             orderId,
             tableId: order.tableId,
             tableNumber: order.tableNumber,
             items: order.items,
             subtotal,
-            gstPercent: gstPct,
+            gstPercent: state.gstPercent,
             gstAmount,
-            serviceChargePercent: serviceChargePct,
-            serviceChargeAmount,
             grandTotal,
             paymentMethod: null,
             isPaid: false,
@@ -349,34 +290,9 @@ function createRestaurantStore(
             orders: s.orders.map((o) =>
               o.id === orderId ? { ...o, status: "billed" } : o,
             ),
-            billSettings: s.billSettings
-              ? {
-                  ...s.billSettings,
-                  currentBillNumber: nextBillNumber,
-                  lastResetDate,
-                }
-              : s.billSettings,
           }));
 
           return bill;
-        },
-
-        requestBill: (orderId) => {
-          set((s) => ({
-            orders: s.orders.map((o) =>
-              o.id === orderId ? { ...o, billRequested: true } : o,
-            ),
-          }));
-        },
-
-        updateBillSettings: (settings) => {
-          set((s) => ({
-            billSettings: { ...s.billSettings, ...settings },
-            // Also sync gstPercent at top level for backwards compat
-            ...(settings.gstPercent !== undefined
-              ? { gstPercent: settings.gstPercent }
-              : {}),
-          }));
         },
 
         processPayment: (billId, method) => {

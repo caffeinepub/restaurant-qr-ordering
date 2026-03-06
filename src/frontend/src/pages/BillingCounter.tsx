@@ -1,22 +1,18 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import {
-  CheckCircle,
-  LogOut,
-  Printer,
-  Receipt,
-  RefreshCw,
-  X,
-} from "lucide-react";
+import { CheckCircle, LogOut, Receipt, RefreshCw, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useActor } from "../hooks/useActor";
 import { useRestaurantStore } from "../restaurantDataStore";
 import { useSellerStore } from "../sellerStore";
 import type { Bill, Order } from "../types";
-import { printBill } from "../utils/billPrint";
-import { fetchOrdersFromBackend, mergeOrders } from "../utils/orderSync";
+import {
+  fetchOrdersFromBackend,
+  mergeOrders,
+  updateOrderStatusOnBackend,
+} from "../utils/orderSync";
 
 interface Props {
   restaurantId: string;
@@ -29,7 +25,6 @@ export default function BillingCounter({ restaurantId, onLogout }: Props) {
     orders: localOrders,
     bills,
     gstPercent,
-    billSettings,
     generateBill,
     processPayment,
   } = useRestaurantStore(restaurantId);
@@ -86,46 +81,20 @@ export default function BillingCounter({ restaurantId, onLogout }: Props) {
   >(null);
   const [paymentSuccess, setPaymentSuccess] = useState(false);
 
-  // State for generated bills from backend-only orders (not in local store)
-  const [generatedBills, setGeneratedBills] = useState<Bill[]>([]);
-
-  // Merge local bills with ad-hoc generated bills for backend orders
-  const allBills = [
-    ...bills,
-    ...generatedBills.filter((b) => !bills.find((lb) => lb.id === b.id)),
-  ];
-
-  // Table is "occupied" if there's an active order in local OR backend
-  function getOrderForTable(
-    tableId: string,
-    currentOrderId: string | null,
-  ): Order | null {
-    if (currentOrderId) {
-      const found = orders.find((o) => o.id === currentOrderId);
-      if (found) return found;
-    }
-    // Fallback: check merged orders by tableId
-    return (
-      orders.find((o) => o.tableId === tableId && o.status === "active") ?? null
-    );
-  }
-
-  const pendingBills = allBills.filter((b) => !b.isPaid);
-  const paidBills = allBills
+  const occupiedTables = tables.filter((t) => t.isOccupied);
+  const pendingBills = bills.filter((b) => !b.isPaid);
+  const paidBills = bills
     .filter((b) => b.isPaid)
     .sort((a, b) => (b.paidAt ?? 0) - (a.paidAt ?? 0));
 
-  // Count tables with active orders (from local or backend)
-  const occupiedCount = tables.filter((t) => {
-    const order = getOrderForTable(t.id, t.currentOrderId);
-    return !!order;
-  }).length;
+  function handleGenerateBill(tableId: string) {
+    const table = tables.find((t) => t.id === tableId);
+    if (!table?.currentOrderId) return;
+    const order = orders.find((o) => o.id === table.currentOrderId);
+    if (!order) return;
 
-  function handleGenerateBillForOrder(order: Order) {
     // Check if bill already exists
-    const existingBill = allBills.find(
-      (b) => b.orderId === order.id && !b.isPaid,
-    );
+    const existingBill = bills.find((b) => b.orderId === order.id && !b.isPaid);
     if (existingBill) {
       setSelectedBill(existingBill);
       setPaymentMethod(null);
@@ -133,89 +102,28 @@ export default function BillingCounter({ restaurantId, onLogout }: Props) {
       return;
     }
 
-    // Check if order is in local store
-    const localOrder = localOrders.find((o) => o.id === order.id);
-    if (localOrder) {
-      const bill = generateBill(order.id);
-      setSelectedBill(bill);
-      setPaymentMethod(null);
-      setPaymentSuccess(false);
-      return;
-    }
-
-    // Backend-only order: generate bill directly without local store
-    const subtotal = order.items.reduce((s, i) => s + i.price * i.quantity, 0);
-    const gstPct = billSettings?.gstPercent ?? gstPercent;
-    const scPct = billSettings?.serviceChargePercent ?? 0;
-    const gstAmount = Math.round(subtotal * (gstPct / 100));
-    const scAmount = Math.round(subtotal * (scPct / 100));
-    const grandTotal = subtotal + gstAmount + scAmount;
-    const todayStr = new Date().toISOString().split("T")[0];
-    const billNum = billSettings?.currentBillNumber ?? 1001;
-
-    // Check if daily reset needed
-    const lastReset = billSettings?.lastResetDate ?? todayStr;
-    const effectiveBillNum =
-      lastReset !== todayStr
-        ? (billSettings?.billNumberPrefix ?? 1001)
-        : billNum;
-
-    const bill: Bill = {
-      id: crypto.randomUUID(),
-      billNumber: effectiveBillNum,
-      orderId: order.id,
-      tableId: order.tableId,
-      tableNumber: order.tableNumber,
-      items: order.items,
-      subtotal,
-      gstPercent: gstPct,
-      gstAmount,
-      serviceChargePercent: scPct,
-      serviceChargeAmount: scAmount,
-      grandTotal,
-      paymentMethod: null,
-      isPaid: false,
-      createdAt: Date.now(),
-      paidAt: null,
-    };
-
-    setGeneratedBills((prev) => [...prev, bill]);
+    const bill = generateBill(order.id);
     setSelectedBill(bill);
     setPaymentMethod(null);
     setPaymentSuccess(false);
   }
 
-  function handleGenerateBill(tableId: string) {
-    const order = getOrderForTable(
-      tableId,
-      tables.find((t) => t.id === tableId)?.currentOrderId ?? null,
-    );
-    if (!order) return;
-    handleGenerateBillForOrder(order);
-  }
-
   function handleProcessPayment() {
     if (!selectedBill || !paymentMethod) return;
-
-    // Check if bill is in local store
-    const isLocalBill = bills.find((b) => b.id === selectedBill.id);
-    if (isLocalBill) {
-      processPayment(selectedBill.id, paymentMethod);
-    } else {
-      // Mark the ad-hoc generated bill as paid
-      setGeneratedBills((prev) =>
-        prev.map((b) =>
-          b.id === selectedBill.id
-            ? { ...b, isPaid: true, paymentMethod, paidAt: Date.now() }
-            : b,
-        ),
-      );
-    }
-
+    processPayment(selectedBill.id, paymentMethod);
     setPaymentSuccess(true);
     toast.success(
       `Payment of ₹${selectedBill.grandTotal} received via ${paymentMethod}`,
     );
+    // Mark order as paid on the ICP backend so customer phone knows table is vacant
+    if (actorRef.current) {
+      updateOrderStatusOnBackend(
+        actorRef.current,
+        selectedBill.orderId,
+        "delivered",
+        "paid",
+      );
+    }
     setTimeout(() => {
       setSelectedBill(null);
       setPaymentSuccess(false);
@@ -276,7 +184,7 @@ export default function BillingCounter({ restaurantId, onLogout }: Props) {
         <div className="flex gap-1 bg-muted rounded-xl p-1 mb-6 max-w-md">
           {(
             [
-              { id: "tables", label: `Tables (${occupiedCount})` },
+              { id: "tables", label: `Tables (${occupiedTables.length})` },
               { id: "pending", label: `Pending (${pendingBills.length})` },
               { id: "paid", label: `Paid (${paidBills.length})` },
             ] as const
@@ -309,49 +217,41 @@ export default function BillingCounter({ restaurantId, onLogout }: Props) {
             ) : (
               <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 {tables.map((table) => {
-                  const order = getOrderForTable(
-                    table.id,
-                    table.currentOrderId,
-                  );
-                  const hasActiveOrder = !!order;
+                  const order = table.currentOrderId
+                    ? orders.find((o) => o.id === table.currentOrderId)
+                    : null;
                   const subtotal = order
                     ? order.items.reduce((s, i) => s + i.price * i.quantity, 0)
                     : 0;
-                  const existingBill = order
-                    ? allBills.find((b) => b.orderId === order.id && !b.isPaid)
+                  const existingBill = table.currentOrderId
+                    ? bills.find(
+                        (b) => b.orderId === table.currentOrderId && !b.isPaid,
+                      )
                     : null;
-                  const isBillRequested = order?.billRequested === true;
 
                   return (
                     <div
                       key={table.id}
                       className={`bg-white rounded-2xl border shadow-card overflow-hidden ${
-                        hasActiveOrder ? "border-primary/30" : "border-border"
+                        table.isOccupied ? "border-primary/30" : "border-border"
                       }`}
                     >
                       <div className="p-4 flex items-center justify-between border-b border-border">
-                        <div className="flex items-center gap-2">
-                          <h3 className="font-display font-bold text-lg text-foreground">
-                            {table.tableNumber}
-                          </h3>
-                          {isBillRequested && (
-                            <span className="flex items-center gap-1 text-xs font-semibold text-orange-600 bg-orange-50 border border-orange-200 px-2 py-0.5 rounded-full animate-pulse">
-                              🧾 Bill Requested
-                            </span>
-                          )}
-                        </div>
+                        <h3 className="font-display font-bold text-lg text-foreground">
+                          {table.tableNumber}
+                        </h3>
                         <Badge
                           className={
-                            hasActiveOrder
+                            table.isOccupied
                               ? "bg-primary/10 text-primary border-primary/20"
                               : "bg-green-50 text-green-700 border-green-200"
                           }
                         >
-                          {hasActiveOrder ? "Occupied" : "Available"}
+                          {table.isOccupied ? "Occupied" : "Available"}
                         </Badge>
                       </div>
                       <div className="p-4">
-                        {hasActiveOrder && order ? (
+                        {table.isOccupied && order ? (
                           <>
                             <div className="space-y-1 mb-3">
                               {order.items.slice(0, 3).map((item) => (
@@ -378,12 +278,7 @@ export default function BillingCounter({ restaurantId, onLogout }: Props) {
                               <span className="font-bold text-foreground">
                                 ₹
                                 {subtotal +
-                                  Math.round(
-                                    subtotal *
-                                      ((billSettings?.gstPercent ??
-                                        gstPercent) /
-                                        100),
-                                  )}
+                                  Math.round(subtotal * (gstPercent / 100))}
                               </span>
                             </div>
                             <Button
@@ -431,9 +326,6 @@ export default function BillingCounter({ restaurantId, onLogout }: Props) {
                       <h3 className="font-semibold text-foreground">
                         {bill.tableNumber}
                       </h3>
-                      <Badge variant="secondary" className="text-xs">
-                        #{bill.billNumber}
-                      </Badge>
                       <Badge variant="secondary" className="text-xs">
                         {bill.items.length} items
                       </Badge>
@@ -497,9 +389,6 @@ export default function BillingCounter({ restaurantId, onLogout }: Props) {
                       >
                         Paid
                       </Badge>
-                      <Badge variant="secondary" className="text-xs">
-                        #{bill.billNumber}
-                      </Badge>
                     </div>
                     <p className="text-xs text-muted-foreground">
                       {bill.paidAt
@@ -518,20 +407,6 @@ export default function BillingCounter({ restaurantId, onLogout }: Props) {
                       {bill.paymentMethod}
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    title="Print Receipt"
-                    onClick={() =>
-                      printBill(
-                        bill,
-                        billSettings,
-                        restaurantInfo?.name ?? "Restaurant",
-                      )
-                    }
-                    className="w-8 h-8 rounded-lg bg-muted flex items-center justify-center hover:bg-accent transition-colors shrink-0"
-                  >
-                    <Printer className="w-4 h-4 text-muted-foreground" />
-                  </button>
                 </div>
               ))
             )}
@@ -566,39 +441,13 @@ export default function BillingCounter({ restaurantId, onLogout }: Props) {
                 <p className="text-sm text-green-600 mt-2">
                   {selectedBill.tableNumber} has been reset
                 </p>
-                <button
-                  type="button"
-                  onClick={() =>
-                    printBill(
-                      {
-                        ...selectedBill,
-                        isPaid: true,
-                        paymentMethod: paymentMethod ?? null,
-                      },
-                      billSettings,
-                      restaurantInfo?.name ?? "Restaurant",
-                    )
-                  }
-                  className="mt-4 flex items-center gap-2 mx-auto px-4 py-2 rounded-xl bg-muted hover:bg-accent transition-colors text-sm font-medium text-foreground"
-                >
-                  <Printer className="w-4 h-4" />
-                  Print Receipt
-                </button>
               </div>
             ) : (
               <>
                 <div className="p-5 border-b border-border flex items-center justify-between">
-                  <div>
-                    <h3 className="font-display font-bold text-lg text-foreground">
-                      Bill — {selectedBill.tableNumber}
-                    </h3>
-                    <p className="text-xs text-muted-foreground">
-                      #{selectedBill.billNumber} ·{" "}
-                      {new Date(selectedBill.createdAt).toLocaleDateString(
-                        "en-IN",
-                      )}
-                    </p>
-                  </div>
+                  <h3 className="font-display font-bold text-lg text-foreground">
+                    Bill — {selectedBill.tableNumber}
+                  </h3>
                   <button
                     type="button"
                     onClick={() => setSelectedBill(null)}
@@ -637,14 +486,6 @@ export default function BillingCounter({ restaurantId, onLogout }: Props) {
                       <span>GST ({selectedBill.gstPercent}%)</span>
                       <span>₹{selectedBill.gstAmount}</span>
                     </div>
-                    {(selectedBill.serviceChargePercent ?? 0) > 0 && (
-                      <div className="flex justify-between text-sm text-muted-foreground">
-                        <span>
-                          Service Charge ({selectedBill.serviceChargePercent}%)
-                        </span>
-                        <span>₹{selectedBill.serviceChargeAmount ?? 0}</span>
-                      </div>
-                    )}
                     <div className="flex justify-between font-bold text-foreground text-base">
                       <span>Grand Total</span>
                       <span className="text-primary">

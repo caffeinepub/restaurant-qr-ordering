@@ -13,7 +13,6 @@ import {
   BarChart3,
   Check,
   Edit2,
-  FileText,
   ImagePlus,
   LogOut,
   Percent,
@@ -30,7 +29,7 @@ import { toast } from "sonner";
 import { useActor } from "../hooks/useActor";
 import { useRestaurantStore } from "../restaurantDataStore";
 import { useSellerStore } from "../sellerStore";
-import type { BillSettings, MenuCategory, MenuItem } from "../types";
+import type { MenuCategory, MenuItem } from "../types";
 import { saveMenuToBackend } from "../utils/menuSync";
 import { saveMenuSnapshot } from "../utils/qrPayload";
 
@@ -39,7 +38,7 @@ interface Props {
   onLogout: () => void;
 }
 
-type AdminSection = "menu" | "tables" | "reports" | "gst" | "bill-settings";
+type AdminSection = "menu" | "tables" | "reports" | "gst";
 
 const CATEGORIES: MenuCategory[] = [
   "Starters",
@@ -55,7 +54,6 @@ export default function AdminPanel({ restaurantId, onLogout }: Props) {
     orders,
     bills,
     gstPercent,
-    billSettings,
     addMenuItem,
     updateMenuItem,
     deleteMenuItem,
@@ -63,7 +61,6 @@ export default function AdminPanel({ restaurantId, onLogout }: Props) {
     addTable,
     deleteTable,
     updateGST,
-    updateBillSettings,
   } = useRestaurantStore(restaurantId);
 
   const { restaurants } = useSellerStore();
@@ -130,37 +127,6 @@ export default function AdminPanel({ restaurantId, onLogout }: Props) {
   // GST
   const [gstInput, setGstInput] = useState(String(gstPercent));
 
-  // Bill Settings form
-  const [billForm, setBillForm] = useState<Partial<BillSettings>>({
-    restaurantName: billSettings?.restaurantName ?? "",
-    address: billSettings?.address ?? "",
-    phone: billSettings?.phone ?? "",
-    gstin: billSettings?.gstin ?? "",
-    gstPercent: billSettings?.gstPercent ?? gstPercent,
-    serviceChargePercent: billSettings?.serviceChargePercent ?? 0,
-    thankYouMessage:
-      billSettings?.thankYouMessage ?? "Thank You! Please Visit Again!",
-    billNumberPrefix: billSettings?.billNumberPrefix ?? 1001,
-  });
-  // Sync billForm when billSettings changes (e.g. on first load)
-  const billSettingsSynced = useRef(false);
-  useEffect(() => {
-    if (!billSettingsSynced.current && billSettings) {
-      billSettingsSynced.current = true;
-      setBillForm({
-        restaurantName: billSettings.restaurantName ?? "",
-        address: billSettings.address ?? "",
-        phone: billSettings.phone ?? "",
-        gstin: billSettings.gstin ?? "",
-        gstPercent: billSettings.gstPercent ?? gstPercent,
-        serviceChargePercent: billSettings.serviceChargePercent ?? 0,
-        thankYouMessage:
-          billSettings.thankYouMessage ?? "Thank You! Please Visit Again!",
-        billNumberPrefix: billSettings.billNumberPrefix ?? 1001,
-      });
-    }
-  }, [billSettings, gstPercent]);
-
   // Print QR
   function printQR(tableNumber: string, qrUrl: string) {
     const el = document.getElementById("print-qr");
@@ -226,7 +192,6 @@ export default function AdminPanel({ restaurantId, onLogout }: Props) {
     { id: "tables" as const, label: "Tables & QR", icon: QrCode },
     { id: "reports" as const, label: "Reports", icon: BarChart3 },
     { id: "gst" as const, label: "GST Settings", icon: Percent },
-    { id: "bill-settings" as const, label: "Bill Settings", icon: FileText },
   ];
 
   return (
@@ -994,377 +959,6 @@ export default function AdminPanel({ restaurantId, onLogout }: Props) {
                       </div>
                     );
                   })}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* BILL SETTINGS */}
-        {section === "bill-settings" && (
-          <div>
-            <h2 className="font-display font-bold text-xl text-foreground mb-4">
-              Bill Settings
-            </h2>
-            <div className="grid lg:grid-cols-2 gap-6">
-              {/* Form */}
-              <div className="bg-white rounded-2xl border border-border shadow-card p-6 space-y-4">
-                <div className="space-y-2">
-                  <label
-                    className="text-sm font-medium text-foreground"
-                    htmlFor="bs-name"
-                  >
-                    Restaurant Name (shown on bill)
-                  </label>
-                  <Input
-                    id="bs-name"
-                    value={billForm.restaurantName ?? ""}
-                    onChange={(e) =>
-                      setBillForm((p) => ({
-                        ...p,
-                        restaurantName: e.target.value,
-                      }))
-                    }
-                    placeholder={restaurantInfo?.name ?? "Restaurant name"}
-                    data-ocid="bill_settings.input"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label
-                    className="text-sm font-medium text-foreground"
-                    htmlFor="bs-address"
-                  >
-                    Address
-                  </label>
-                  <Input
-                    id="bs-address"
-                    value={billForm.address ?? ""}
-                    onChange={(e) =>
-                      setBillForm((p) => ({ ...p, address: e.target.value }))
-                    }
-                    placeholder="Restaurant address"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label
-                    className="text-sm font-medium text-foreground"
-                    htmlFor="bs-phone"
-                  >
-                    Phone
-                  </label>
-                  <Input
-                    id="bs-phone"
-                    value={billForm.phone ?? ""}
-                    onChange={(e) =>
-                      setBillForm((p) => ({ ...p, phone: e.target.value }))
-                    }
-                    placeholder="Contact number"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label
-                    className="text-sm font-medium text-foreground"
-                    htmlFor="bs-gstin"
-                  >
-                    GSTIN
-                  </label>
-                  <Input
-                    id="bs-gstin"
-                    value={billForm.gstin ?? ""}
-                    onChange={(e) =>
-                      setBillForm((p) => ({ ...p, gstin: e.target.value }))
-                    }
-                    placeholder="GST Identification Number"
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-2">
-                    <label
-                      className="text-sm font-medium text-foreground"
-                      htmlFor="bs-gst"
-                    >
-                      GST %
-                    </label>
-                    <Input
-                      id="bs-gst"
-                      type="number"
-                      min="0"
-                      max="100"
-                      value={billForm.gstPercent ?? 18}
-                      onChange={(e) =>
-                        setBillForm((p) => ({
-                          ...p,
-                          gstPercent: Number(e.target.value),
-                        }))
-                      }
-                      placeholder="18"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label
-                      className="text-sm font-medium text-foreground"
-                      htmlFor="bs-sc"
-                    >
-                      Service Charge %
-                    </label>
-                    <Input
-                      id="bs-sc"
-                      type="number"
-                      min="0"
-                      max="100"
-                      value={billForm.serviceChargePercent ?? 0}
-                      onChange={(e) =>
-                        setBillForm((p) => ({
-                          ...p,
-                          serviceChargePercent: Number(e.target.value),
-                        }))
-                      }
-                      placeholder="0"
-                    />
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <label
-                    className="text-sm font-medium text-foreground"
-                    htmlFor="bs-thankyou"
-                  >
-                    Thank You Message
-                  </label>
-                  <Input
-                    id="bs-thankyou"
-                    value={billForm.thankYouMessage ?? ""}
-                    onChange={(e) =>
-                      setBillForm((p) => ({
-                        ...p,
-                        thankYouMessage: e.target.value,
-                      }))
-                    }
-                    placeholder="Thank You! Please Visit Again!"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label
-                    className="text-sm font-medium text-foreground"
-                    htmlFor="bs-billnum"
-                  >
-                    Daily bill numbers start from
-                  </label>
-                  <Input
-                    id="bs-billnum"
-                    type="number"
-                    min="1"
-                    value={billForm.billNumberPrefix ?? 1001}
-                    onChange={(e) =>
-                      setBillForm((p) => ({
-                        ...p,
-                        billNumberPrefix: Number(e.target.value),
-                      }))
-                    }
-                    placeholder="1001"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Bill numbers reset to this value every day.
-                  </p>
-                </div>
-                <Button
-                  className="w-full bg-primary hover:bg-primary/90 text-white font-semibold"
-                  data-ocid="bill_settings.save_button"
-                  onClick={() => {
-                    const gst = billForm.gstPercent;
-                    if (
-                      gst !== undefined &&
-                      (Number.isNaN(gst) || gst < 0 || gst > 100)
-                    ) {
-                      toast.error("Enter a valid GST percentage (0-100)");
-                      return;
-                    }
-                    updateBillSettings({
-                      ...billForm,
-                      gstPercent: gst ?? billSettings?.gstPercent ?? 18,
-                    });
-                    // Also sync top-level gstPercent for backwards compat
-                    if (gst !== undefined) updateGST(gst);
-                    toast.success("Bill settings saved");
-                  }}
-                >
-                  <Check className="w-4 h-4 mr-2" />
-                  Save Bill Settings
-                </Button>
-              </div>
-
-              {/* Live Preview */}
-              <div className="bg-white rounded-2xl border border-border shadow-card p-6">
-                <h3 className="font-semibold text-foreground mb-4 flex items-center gap-2">
-                  <FileText className="w-4 h-4 text-primary" />
-                  Receipt Preview
-                </h3>
-                <div className="bg-gray-50 rounded-xl p-4 border border-dashed border-border">
-                  <div
-                    style={{
-                      fontFamily: "monospace",
-                      fontSize: "12px",
-                      color: "#000",
-                    }}
-                  >
-                    <div style={{ textAlign: "center", marginBottom: "8px" }}>
-                      <div style={{ fontSize: "14px", fontWeight: "bold" }}>
-                        {billForm.restaurantName?.trim() ||
-                          restaurantInfo?.name ||
-                          "Restaurant Name"}
-                      </div>
-                      {billForm.address && (
-                        <div style={{ fontSize: "11px" }}>
-                          {billForm.address}
-                        </div>
-                      )}
-                      {billForm.phone && (
-                        <div style={{ fontSize: "11px" }}>
-                          Tel: {billForm.phone}
-                        </div>
-                      )}
-                    </div>
-                    <div
-                      style={{ borderTop: "1px dashed #999", margin: "6px 0" }}
-                    />
-                    <div
-                      style={{
-                        textAlign: "center",
-                        fontWeight: "bold",
-                        marginBottom: "4px",
-                      }}
-                    >
-                      GST Invoice
-                    </div>
-                    {billForm.gstin && (
-                      <div style={{ fontSize: "11px" }}>
-                        GSTIN: {billForm.gstin}
-                      </div>
-                    )}
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        fontSize: "11px",
-                        marginBottom: "4px",
-                      }}
-                    >
-                      <span>
-                        Bill No: <b>#{billForm.billNumberPrefix ?? 1001}</b>
-                      </span>
-                      <span>
-                        Date: {new Date().toLocaleDateString("en-IN")}
-                      </span>
-                      <span>Table 1</span>
-                    </div>
-                    <div
-                      style={{ borderTop: "1px dashed #999", margin: "6px 0" }}
-                    />
-                    <div style={{ fontSize: "11px" }}>
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                        }}
-                      >
-                        <span>Paneer Tikka × 2</span>
-                        <span>₹360</span>
-                      </div>
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                        }}
-                      >
-                        <span>Mango Lassi × 1</span>
-                        <span>₹120</span>
-                      </div>
-                    </div>
-                    <div
-                      style={{ borderTop: "1px dashed #999", margin: "6px 0" }}
-                    />
-                    <div style={{ fontSize: "11px" }}>
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                        }}
-                      >
-                        <span>Subtotal</span>
-                        <span>₹480</span>
-                      </div>
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                        }}
-                      >
-                        <span>GST @ {billForm.gstPercent ?? 18}%</span>
-                        <span>
-                          ₹
-                          {Math.round(
-                            480 * ((billForm.gstPercent ?? 18) / 100),
-                          )}
-                        </span>
-                      </div>
-                      {(billForm.serviceChargePercent ?? 0) > 0 && (
-                        <div
-                          style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                          }}
-                        >
-                          <span>
-                            Service Charge ({billForm.serviceChargePercent}%)
-                          </span>
-                          <span>
-                            ₹
-                            {Math.round(
-                              480 *
-                                ((billForm.serviceChargePercent ?? 0) / 100),
-                            )}
-                          </span>
-                        </div>
-                      )}
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          fontWeight: "bold",
-                          borderTop: "1px dashed #999",
-                          paddingTop: "4px",
-                          marginTop: "2px",
-                        }}
-                      >
-                        <span>Grand Total</span>
-                        <span>
-                          ₹
-                          {480 +
-                            Math.round(
-                              480 * ((billForm.gstPercent ?? 18) / 100),
-                            ) +
-                            Math.round(
-                              480 *
-                                ((billForm.serviceChargePercent ?? 0) / 100),
-                            )}
-                        </span>
-                      </div>
-                    </div>
-                    <div
-                      style={{ borderTop: "1px dashed #999", margin: "6px 0" }}
-                    />
-                    <div style={{ textAlign: "center", fontSize: "11px" }}>
-                      <div style={{ fontStyle: "italic" }}>
-                        {billForm.thankYouMessage?.trim() ||
-                          "Thank You! Please Visit Again!"}
-                      </div>
-                      <div style={{ marginTop: "2px" }}>
-                        For{" "}
-                        {billForm.restaurantName?.trim() ||
-                          restaurantInfo?.name ||
-                          "Restaurant"}
-                      </div>
-                    </div>
-                  </div>
                 </div>
               </div>
             </div>

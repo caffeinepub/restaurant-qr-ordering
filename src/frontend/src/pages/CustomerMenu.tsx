@@ -17,7 +17,7 @@ import { useRestaurantStore } from "../restaurantDataStore";
 import { useSellerStore } from "../sellerStore";
 import type { CartItem, MenuCategory, MenuItem, QRPayload } from "../types";
 import { fetchMenuFromBackend } from "../utils/menuSync";
-import { syncOrderToBackend } from "../utils/orderSync";
+import { fetchOrdersFromBackend, syncOrderToBackend } from "../utils/orderSync";
 import {
   decodeMenuFromQR,
   decodeQRPayload,
@@ -47,8 +47,9 @@ type FilterCategory = (typeof ALL_CATEGORIES)[number];
 
 // Inner component that uses the decoded payload — restaurantId is known at this point
 function CustomerMenuInner({ payload }: { payload: QRPayload }) {
-  const { orders, placeOrder, addItemsToOrder, requestBill } =
-    useRestaurantStore(payload.restaurantId);
+  const { orders, placeOrder, addItemsToOrder } = useRestaurantStore(
+    payload.restaurantId,
+  );
   const { actor } = useActor();
   const sellerRestaurants = useSellerStore((s) => s.restaurants);
 
@@ -66,26 +67,95 @@ function CustomerMenuInner({ payload }: { payload: QRPayload }) {
   const [view, setView] = useState<CustomerView>("menu");
   const [placedOrderId, setPlacedOrderId] = useState<string | null>(null);
   const [addingMore, setAddingMore] = useState(false);
-  const [billRequestSent, setBillRequestSent] = useState(false);
   const initialViewSet = useRef(false);
+  // Track the placed order id to poll for paid status
+  const placedOrderIdRef = useRef<string | null>(null);
+  // Refs for stable access in effects
+  const actorRef = useRef(actor);
+  actorRef.current = actor;
 
-  // Find active order by tableId (not sessionToken — we have tableId in payload now)
+  // Find active order by tableId (only active/billed, not paid)
   const activeOrder =
     orders.find(
-      (o) => o.tableId === payload.tableId && o.status === "active",
+      (o) =>
+        o.tableId === payload.tableId &&
+        (o.status === "active" || o.status === "billed"),
     ) ?? null;
 
-  // Determine initial view once
+  const activeOrderRef = useRef(activeOrder);
+  activeOrderRef.current = activeOrder;
+
+  // Determine initial view on mount: check backend to detect if a local
+  // "active" order was actually paid already (e.g. billing processed payment
+  // while the customer closed the browser, then scanned again).
   useEffect(() => {
-    if (!initialViewSet.current) {
-      initialViewSet.current = true;
-      if (activeOrder) {
-        setView("options");
-      } else {
-        setView("menu");
-      }
+    if (initialViewSet.current) return;
+    initialViewSet.current = true;
+
+    const currentActiveOrder = activeOrderRef.current;
+
+    if (!currentActiveOrder) {
+      setView("menu");
+      return;
     }
-  }, [activeOrder]);
+
+    const currentActor = actorRef.current;
+    const rid = payload.restaurantId;
+    const oid = currentActiveOrder.id;
+
+    if (currentActor) {
+      fetchOrdersFromBackend(currentActor, rid)
+        .then((backendOrders) => {
+          const backendOrder = backendOrders.find((o) => o.id === oid);
+          if (backendOrder?.status === "paid") {
+            setView("menu");
+          } else {
+            setView("options");
+          }
+        })
+        .catch(() => setView("options"));
+    } else {
+      setView("options");
+    }
+    // payload.restaurantId is stable (comes from QR URL, never changes)
+    // biome-ignore lint/correctness/useExhaustiveDependencies: intentional mount-only effect
+  }, [payload.restaurantId]);
+
+  // Poll backend every 5 seconds to detect when the placed/active order is paid
+  // This auto-resets the customer's view so they see a fresh menu if they keep the page open
+  useEffect(() => {
+    const rid = payload.restaurantId;
+
+    const interval = setInterval(() => {
+      const currentActor = actorRef.current;
+      if (!currentActor) return;
+
+      const orderIdToCheck =
+        placedOrderIdRef.current ?? activeOrderRef.current?.id ?? null;
+      if (!orderIdToCheck) return;
+
+      fetchOrdersFromBackend(currentActor, rid)
+        .then((backendOrders) => {
+          const backendOrder = backendOrders.find(
+            (o) => o.id === orderIdToCheck,
+          );
+          if (backendOrder?.status === "paid") {
+            setView("menu");
+            setPlacedOrderId(null);
+            placedOrderIdRef.current = null;
+            setCart([]);
+            setAddingMore(false);
+          }
+        })
+        .catch(() => {
+          // non-fatal
+        });
+    }, 5000);
+
+    return () => clearInterval(interval);
+    // payload.restaurantId is stable
+    // biome-ignore lint/correctness/useExhaustiveDependencies: stable dep, refs used for dynamic values
+  }, [payload.restaurantId]);
 
   const menuItems = payload.menuItems.filter((item) => item.isAvailable);
   const gstPercent = payload.gstPercent;
@@ -145,6 +215,7 @@ function CustomerMenuInner({ payload }: { payload: QRPayload }) {
     if (addingMore && activeOrder) {
       addItemsToOrder(activeOrder.id, cart);
       setPlacedOrderId(activeOrder.id);
+      placedOrderIdRef.current = activeOrder.id;
       toast.success("Items added to your order!");
       // Sync updated order to backend so kitchen/billing on other devices see it
       if (actor) {
@@ -173,6 +244,7 @@ function CustomerMenuInner({ payload }: { payload: QRPayload }) {
     } else {
       const order = placeOrder(payload.tableId, payload.tableNumber, cart);
       setPlacedOrderId(order.id);
+      placedOrderIdRef.current = order.id;
       toast.success("Order placed successfully!");
       // Sync new order to backend so kitchen/billing on other devices see it
       if (actor) {
@@ -357,37 +429,6 @@ function CustomerMenuInner({ payload }: { payload: QRPayload }) {
               </div>
             </div>
           )}
-
-          {/* Request Bill Button */}
-          {confirmedOrder &&
-            (billRequestSent ? (
-              <div
-                className="w-full h-12 flex items-center justify-center gap-2 rounded-xl bg-green-50 border border-green-200 text-green-700 font-semibold text-sm mb-3"
-                data-ocid="customer.success_state"
-              >
-                <CheckCircle className="w-4 h-4" />
-                Bill request sent to counter
-              </div>
-            ) : (
-              <Button
-                className="w-full h-12 bg-amber-500 hover:bg-amber-600 text-white font-semibold mb-3"
-                data-ocid="customer.primary_button"
-                onClick={() => {
-                  requestBill(confirmedOrder.id);
-                  // Sync the bill-requested status to backend
-                  if (actor) {
-                    syncOrderToBackend(actor, payload.restaurantId, {
-                      ...confirmedOrder,
-                      billRequested: true,
-                    });
-                  }
-                  setBillRequestSent(true);
-                  toast.success("Bill request sent to billing counter!");
-                }}
-              >
-                🧾 Request Bill
-              </Button>
-            ))}
 
           <Button
             className="w-full h-12 bg-primary hover:bg-primary/90 text-white font-semibold"
