@@ -51,6 +51,9 @@ interface RestaurantStore extends AppState {
 
   // GST
   updateGST: (percent: number) => void;
+
+  // External sync — merges backend orders into local state so generateBill works
+  syncExternalOrders: (externalOrders: Order[]) => void;
 }
 
 // Map of store instances keyed by restaurantId
@@ -328,6 +331,33 @@ function createRestaurantStore(
         },
 
         updateGST: (percent) => set({ gstPercent: percent }),
+
+        syncExternalOrders: (externalOrders) =>
+          set((state) => {
+            const localIds = new Set(state.orders.map((o) => o.id));
+            const newOrders = externalOrders.filter((o) => !localIds.has(o.id));
+            if (newOrders.length === 0) return state;
+
+            const updatedOrders = [...state.orders, ...newOrders];
+
+            // Mark tables as occupied for newly discovered active/billed orders
+            const updatedTables = state.tables.map((table) => {
+              if (table.isOccupied) return table;
+              const orderForTable = newOrders.find(
+                (o) =>
+                  o.tableId === table.id &&
+                  (o.status === "active" || o.status === "billed"),
+              );
+              if (!orderForTable) return table;
+              return {
+                ...table,
+                isOccupied: true,
+                currentOrderId: orderForTable.id,
+              };
+            });
+
+            return { orders: updatedOrders, tables: updatedTables };
+          }),
       }),
       {
         name: `restaurant_data_${restaurantId}`,

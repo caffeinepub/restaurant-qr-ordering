@@ -31,7 +31,7 @@ import { useRestaurantStore } from "../restaurantDataStore";
 import { useSellerStore } from "../sellerStore";
 import type { MenuCategory, MenuItem } from "../types";
 import { saveMenuToBackend } from "../utils/menuSync";
-import { saveMenuSnapshot } from "../utils/qrPayload";
+import { encodeMenuForQR, saveMenuSnapshot } from "../utils/qrPayload";
 
 interface Props {
   restaurantId: string;
@@ -89,6 +89,26 @@ export default function AdminPanel({ restaurantId, onLogout }: Props) {
       saveMenuToBackend(actorRef.current, snapshot);
     }
   }, [menuItems, gstPercent, restaurantId, restaurantInfo]);
+
+  // Push menu to backend as soon as actor first becomes available.
+  // This handles the case where actor wasn't ready during the initial render,
+  // so the menu-sync effect above was a no-op (actorRef.current was null then).
+  const menuPushedRef = useRef(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional one-shot effect — only fires when actor first becomes non-null; other values are captured at that moment
+  useEffect(() => {
+    if (!actor || menuPushedRef.current) return;
+    menuPushedRef.current = true;
+    const snapshot = {
+      restaurantId,
+      restaurantName: restaurantInfo?.name ?? "Restaurant",
+      gstPercent,
+      isActive: restaurantInfo?.isActive ?? true,
+      menuItems,
+      savedAt: Date.now(),
+    };
+    saveMenuSnapshot(snapshot);
+    saveMenuToBackend(actor, snapshot);
+  }, [actor]);
 
   // Menu editing state
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -675,12 +695,18 @@ export default function AdminPanel({ restaurantId, onLogout }: Props) {
             ) : (
               <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 {tables.map((table) => {
-                  // SHORT QR URL — only restaurant ID, table ID, table name.
-                  // Menu is stored in the ICP canister (saveMenuToBackend above)
-                  // and fetched by the customer's phone when they scan.
-                  // Short URLs = scannable QR codes on any phone.
+                  // QR URL embeds compact menu as ?d= so customer phones can
+                  // load menu instantly from the URL — no network/canister needed.
+                  // encodeMenuForQR produces a compact URL-safe base64 string.
                   const tn = encodeURIComponent(table.tableNumber);
-                  const qrData = `${window.location.origin}/?r=${restaurantId}&t=${table.id}&tn=${tn}`;
+                  const menuEncoded = encodeMenuForQR(
+                    restaurantInfo?.name ?? "Restaurant",
+                    gstPercent,
+                    menuItems,
+                  );
+                  const qrData = menuEncoded
+                    ? `${window.location.origin}/?r=${restaurantId}&t=${table.id}&tn=${tn}&d=${menuEncoded}`
+                    : `${window.location.origin}/?r=${restaurantId}&t=${table.id}&tn=${tn}`;
                   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(qrData)}&bgcolor=ffffff&color=000000&margin=10&ecc=M`;
                   return (
                     <div

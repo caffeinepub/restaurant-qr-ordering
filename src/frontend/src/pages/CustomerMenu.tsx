@@ -34,7 +34,7 @@ interface Props {
   qrParam?: string;
 }
 
-type CustomerView = "menu" | "confirmation" | "options";
+type CustomerView = "menu" | "confirmation" | "options" | "paybill";
 
 const CATEGORIES: MenuCategory[] = [
   "Starters",
@@ -67,6 +67,8 @@ function CustomerMenuInner({ payload }: { payload: QRPayload }) {
   const [view, setView] = useState<CustomerView>("menu");
   const [placedOrderId, setPlacedOrderId] = useState<string | null>(null);
   const [addingMore, setAddingMore] = useState(false);
+  const [billRequested, setBillRequested] = useState(false);
+  const [billRequestLoading, setBillRequestLoading] = useState(false);
   const initialViewSet = useRef(false);
   // Track the placed order id to poll for paid status
   const placedOrderIdRef = useRef<string | null>(null);
@@ -88,6 +90,7 @@ function CustomerMenuInner({ payload }: { payload: QRPayload }) {
   // Determine initial view on mount: check backend to detect if a local
   // "active" order was actually paid already (e.g. billing processed payment
   // while the customer closed the browser, then scanned again).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional mount-only effect; refs used for mutable values
   useEffect(() => {
     if (initialViewSet.current) return;
     initialViewSet.current = true;
@@ -117,12 +120,11 @@ function CustomerMenuInner({ payload }: { payload: QRPayload }) {
     } else {
       setView("options");
     }
-    // payload.restaurantId is stable (comes from QR URL, never changes)
-    // biome-ignore lint/correctness/useExhaustiveDependencies: intentional mount-only effect
   }, [payload.restaurantId]);
 
   // Poll backend every 5 seconds to detect when the placed/active order is paid
   // This auto-resets the customer's view so they see a fresh menu if they keep the page open
+  // biome-ignore lint/correctness/useExhaustiveDependencies: payload.restaurantId is stable from QR URL; refs used for dynamic values
   useEffect(() => {
     const rid = payload.restaurantId;
 
@@ -145,6 +147,8 @@ function CustomerMenuInner({ payload }: { payload: QRPayload }) {
             placedOrderIdRef.current = null;
             setCart([]);
             setAddingMore(false);
+            setBillRequested(false);
+            setBillRequestLoading(false);
           }
         })
         .catch(() => {
@@ -153,8 +157,6 @@ function CustomerMenuInner({ payload }: { payload: QRPayload }) {
     }, 5000);
 
     return () => clearInterval(interval);
-    // payload.restaurantId is stable
-    // biome-ignore lint/correctness/useExhaustiveDependencies: stable dep, refs used for dynamic values
   }, [payload.restaurantId]);
 
   const menuItems = payload.menuItems.filter((item) => item.isAvailable);
@@ -307,9 +309,9 @@ function CustomerMenuInner({ payload }: { payload: QRPayload }) {
             <Button
               variant="outline"
               className="w-full h-12 text-base font-semibold"
-              onClick={() => setView("confirmation")}
+              onClick={() => setView("paybill")}
             >
-              🧾 View/Pay Bill
+              🧾 View &amp; Pay Bill
             </Button>
           </div>
           {activeOrder && (
@@ -438,6 +440,156 @@ function CustomerMenuInner({ payload }: { payload: QRPayload }) {
             }}
           >
             ➕ Add More Items
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  // Pay Bill View — shown when customer taps "View & Pay Bill"
+  if (view === "paybill") {
+    const billOrder = placedOrderId
+      ? orders.find((o) => o.id === placedOrderId)
+      : activeOrder;
+    const billSub = billOrder
+      ? billOrder.items.reduce((s, i) => s + i.price * i.quantity, 0)
+      : 0;
+    const billGst = Math.round(billSub * (gstPercent / 100));
+    const billTotal = billSub + billGst;
+
+    async function handleRequestBill() {
+      setBillRequestLoading(true);
+      // Update order status to "billed" on the backend so billing counter sees it
+      if (billOrder && actor) {
+        try {
+          const billedOrder = { ...billOrder, status: "billed" as const };
+          await syncOrderToBackend(actor, payload.restaurantId, billedOrder);
+        } catch {
+          // non-fatal
+        }
+      }
+      setBillRequestLoading(false);
+      setBillRequested(true);
+    }
+
+    return (
+      <div className="min-h-screen bg-background">
+        <header className="sticky top-0 z-40 bg-white/90 backdrop-blur border-b border-border">
+          <div className="px-4 py-4 flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setView("options")}
+              className="w-8 h-8 rounded-full bg-muted flex items-center justify-center"
+              aria-label="Back"
+            >
+              <span className="text-muted-foreground text-lg leading-none">
+                ←
+              </span>
+            </button>
+            <div>
+              <h1 className="font-display font-bold text-foreground">
+                {payload.restaurantName}
+              </h1>
+            </div>
+            <Badge variant="secondary" className="ml-auto text-xs">
+              {payload.tableNumber}
+            </Badge>
+          </div>
+        </header>
+
+        <div className="max-w-md mx-auto p-4">
+          <div className="text-center py-6">
+            <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-3">
+              <span className="text-3xl">🧾</span>
+            </div>
+            <h2 className="text-2xl font-display font-bold text-foreground mb-1">
+              Your Bill
+            </h2>
+            <p className="text-muted-foreground text-sm">
+              {payload.tableNumber}
+            </p>
+          </div>
+
+          {billOrder ? (
+            <div className="bg-white rounded-2xl border border-border shadow-card p-5 mb-6">
+              <h3 className="font-semibold text-foreground mb-3 flex items-center gap-2">
+                <span>📋</span> Order Summary
+              </h3>
+              <div className="space-y-2 mb-4">
+                {billOrder.items.map((item) => (
+                  <div
+                    key={item.menuItemId}
+                    className="flex justify-between text-sm"
+                  >
+                    <span className="text-foreground">
+                      {item.name}{" "}
+                      <span className="text-muted-foreground">
+                        × {item.quantity}
+                      </span>
+                    </span>
+                    <span className="font-medium">
+                      ₹{item.price * item.quantity}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              <Separator />
+              <div className="mt-3 space-y-1.5">
+                <div className="flex justify-between text-sm text-muted-foreground">
+                  <span>Subtotal</span>
+                  <span>₹{billSub}</span>
+                </div>
+                <div className="flex justify-between text-sm text-muted-foreground">
+                  <span>GST ({gstPercent}%)</span>
+                  <span>₹{billGst}</span>
+                </div>
+                <div className="flex justify-between font-bold text-foreground text-base pt-1">
+                  <span>Grand Total</span>
+                  <span className="text-primary">₹{billTotal}</span>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="text-center py-8 text-muted-foreground">
+              No order found.
+            </div>
+          )}
+
+          {billRequested ? (
+            <div
+              data-ocid="paybill.success_state"
+              className="bg-green-50 border border-green-200 rounded-2xl p-5 text-center"
+            >
+              <div className="text-3xl mb-2">✅</div>
+              <h3 className="font-bold text-green-800 mb-1">Bill Requested!</h3>
+              <p className="text-green-700 text-sm">
+                Our billing staff has been notified. Please wait at the counter
+                for payment processing.
+              </p>
+            </div>
+          ) : (
+            <Button
+              data-ocid="paybill.primary_button"
+              className="w-full h-12 text-base font-bold bg-primary hover:bg-primary/90 text-white"
+              onClick={handleRequestBill}
+              disabled={billRequestLoading || !billOrder}
+            >
+              {billRequestLoading
+                ? "Notifying Counter..."
+                : "🔔 Request Bill at Counter"}
+            </Button>
+          )}
+
+          <Button
+            data-ocid="paybill.secondary_button"
+            variant="ghost"
+            className="w-full mt-3 h-10 text-sm text-muted-foreground"
+            onClick={() => {
+              setAddingMore(true);
+              setView("menu");
+            }}
+          >
+            ➕ Order More Food
           </Button>
         </div>
       </div>
@@ -728,14 +880,18 @@ function CompactQRLoader({
   const tn = tableNumberProp || "Table";
   const [payload, setPayload] = useState<QRPayload | null>(null);
   const [loading, setLoading] = useState(true);
+  const [retryCount, setRetryCount] = useState(0);
   const { actor } = useActor();
   const actorRef = useRef(actor);
   actorRef.current = actor;
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: retryCount is intentionally included to allow manual retry; actorRef accessed via ref
   useEffect(() => {
     let cancelled = false;
 
     async function loadMenu() {
+      setLoading(true);
+
       // Helper to build payload from a snapshot
       function buildPayload(snapshot: {
         restaurantName: string;
@@ -753,29 +909,54 @@ function CompactQRLoader({
         };
       }
 
-      // STEP 1: Try ICP canister — no auth required, works on any device
-      const tryCanister = async () => {
+      // STEP 1: ?d= URL param — compact menu embedded in QR code itself.
+      // This is the PRIMARY path: no network, no localStorage, works on ANY phone instantly.
+      // New QR codes always have this. Only old QR codes (printed before this fix) won't have it.
+      if (menuData && !cancelled) {
+        const decoded = decodeMenuFromQR(menuData, restaurantId, tableId, tn);
+        if (decoded) {
+          setPayload(decoded);
+          setLoading(false);
+          return;
+        }
+      }
+
+      if (cancelled) return;
+
+      // STEP 2: ICP canister — no auth required, works on any device.
+      // Used when QR code doesn't have ?d= param (old QR codes).
+      // Retry up to 3 times with 1s delay between each attempt.
+      const tryCanister = async (): Promise<boolean> => {
         const currentActor = actorRef.current;
         if (!currentActor) return false;
-        try {
-          const remote = await fetchMenuFromBackend(currentActor, restaurantId);
-          if (remote && !cancelled) {
-            setPayload(buildPayload(remote));
-            setLoading(false);
-            return true;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          if (cancelled) return false;
+          try {
+            const remote = await fetchMenuFromBackend(
+              currentActor,
+              restaurantId,
+            );
+            if (remote && !cancelled) {
+              setPayload(buildPayload(remote));
+              setLoading(false);
+              return true;
+            }
+          } catch {
+            // non-fatal — try again
           }
-        } catch {
-          // non-fatal
+          if (attempt < 2 && !cancelled) {
+            await new Promise<void>((r) => setTimeout(r, 1000));
+          }
         }
         return false;
       };
 
-      // Wait for actor to be ready (it initialises asynchronously)
+      // Wait for actor to be ready (initialises asynchronously on mobile)
       let actorReady = !!actorRef.current;
       if (!actorReady) {
-        // Wait up to 3 seconds for actor
-        for (let i = 0; i < 6 && !actorRef.current; i++) {
+        for (let i = 0; i < 16 && !actorRef.current; i++) {
           await new Promise<void>((r) => setTimeout(r, 500));
+          if (cancelled) return;
         }
         actorReady = !!actorRef.current;
       }
@@ -787,22 +968,12 @@ function CompactQRLoader({
 
       if (cancelled) return;
 
-      // STEP 2: localStorage snapshot (same browser where admin logged in)
+      // STEP 3: localStorage snapshot (same browser where admin logged in)
       const snapshot = loadMenuSnapshot(restaurantId);
       if (snapshot && !cancelled) {
         setPayload(buildPayload(snapshot));
         setLoading(false);
         return;
-      }
-
-      // STEP 3: Legacy ?d= URL param (old QR codes with embedded menu)
-      if (menuData && !cancelled) {
-        const decoded = decodeMenuFromQR(menuData, restaurantId, tableId, tn);
-        if (decoded) {
-          setPayload(decoded);
-          setLoading(false);
-          return;
-        }
       }
 
       // All methods failed
@@ -813,7 +984,7 @@ function CompactQRLoader({
     return () => {
       cancelled = true;
     };
-  }, [restaurantId, tableId, tn, menuData]);
+  }, [restaurantId, tableId, tn, menuData, retryCount]);
 
   if (loading) {
     return (
@@ -834,11 +1005,18 @@ function CompactQRLoader({
           <h2 className="text-2xl font-display font-bold text-foreground mb-2">
             Menu Not Available
           </h2>
-          <p className="text-muted-foreground text-sm leading-relaxed">
+          <p className="text-muted-foreground text-sm leading-relaxed mb-5">
             The menu could not be loaded. Please ask the restaurant staff to
             open their <strong>Admin Panel</strong> once — this saves the menu
             to the cloud. Then scan the QR code again.
           </p>
+          <button
+            type="button"
+            onClick={() => setRetryCount((c) => c + 1)}
+            className="px-6 py-3 bg-primary text-white font-semibold rounded-xl hover:bg-primary/90 transition-colors"
+          >
+            🔄 Retry
+          </button>
         </div>
       </div>
     );

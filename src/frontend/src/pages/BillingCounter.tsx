@@ -1,7 +1,7 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import { CheckCircle, LogOut, Receipt, RefreshCw, X } from "lucide-react";
+import { CheckCircle, LogOut, Receipt, RefreshCw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useActor } from "../hooks/useActor";
@@ -19,6 +19,113 @@ interface Props {
   onLogout: () => void;
 }
 
+// Inline bill card with Paid / Pending actions — shown when a customer requests the bill
+interface InlineBillCardProps {
+  bill: Bill;
+  onPaid: (bill: Bill, method: "Cash" | "UPI" | "Card") => void;
+  onPending: (bill: Bill) => void;
+}
+
+function InlineBillCard({ bill, onPaid, onPending }: InlineBillCardProps) {
+  const [paymentMethod, setPaymentMethod] = useState<
+    "Cash" | "UPI" | "Card" | null
+  >(null);
+  const [confirming, setConfirming] = useState(false);
+
+  return (
+    <div
+      data-ocid="billing.bill_request.card"
+      className="bg-white rounded-2xl border-2 border-orange-300 shadow-card overflow-hidden"
+    >
+      {/* Header with "Bill Requested" banner */}
+      <div className="bg-orange-50 border-b border-orange-200 px-4 py-3 flex items-center gap-2">
+        <span className="w-2 h-2 rounded-full bg-orange-500 animate-pulse" />
+        <span className="text-sm font-semibold text-orange-700">
+          Bill Requested
+        </span>
+        <span className="ml-auto font-bold text-foreground">
+          {bill.tableNumber}
+        </span>
+      </div>
+
+      {/* Bill items */}
+      <div className="p-4 space-y-1.5">
+        {bill.items.map((item) => (
+          <div key={item.menuItemId} className="flex justify-between text-sm">
+            <span className="text-foreground">
+              {item.name}{" "}
+              <span className="text-muted-foreground">× {item.quantity}</span>
+            </span>
+            <span className="font-medium">₹{item.price * item.quantity}</span>
+          </div>
+        ))}
+        <Separator className="my-2" />
+        <div className="flex justify-between text-sm text-muted-foreground">
+          <span>Subtotal</span>
+          <span>₹{bill.subtotal}</span>
+        </div>
+        <div className="flex justify-between text-sm text-muted-foreground">
+          <span>GST ({bill.gstPercent}%)</span>
+          <span>₹{bill.gstAmount}</span>
+        </div>
+        <div className="flex justify-between font-bold text-foreground text-base pt-1">
+          <span>Grand Total</span>
+          <span className="text-primary">₹{bill.grandTotal}</span>
+        </div>
+      </div>
+
+      {/* Payment method + actions */}
+      <div className="px-4 pb-4 space-y-3">
+        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+          Payment Method
+        </p>
+        <div className="grid grid-cols-3 gap-2">
+          {(["Cash", "UPI", "Card"] as const).map((method) => (
+            <button
+              key={method}
+              type="button"
+              data-ocid={`billing.payment_method.${method.toLowerCase()}.toggle`}
+              onClick={() => setPaymentMethod(method)}
+              className={`py-2.5 rounded-xl border-2 text-sm font-semibold transition-all ${
+                paymentMethod === method
+                  ? "border-primary bg-primary/10 text-primary"
+                  : "border-border text-muted-foreground hover:border-primary/30"
+              }`}
+            >
+              {method === "Cash" ? "💵" : method === "UPI" ? "📱" : "💳"}{" "}
+              {method}
+            </button>
+          ))}
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <Button
+            data-ocid="billing.mark_pending.button"
+            variant="outline"
+            className="h-10 text-sm font-semibold border-border"
+            onClick={() => onPending(bill)}
+          >
+            Keep Pending
+          </Button>
+          <Button
+            data-ocid="billing.mark_paid.button"
+            className="h-10 text-sm font-bold bg-green-600 hover:bg-green-700 text-white"
+            disabled={!paymentMethod || confirming}
+            onClick={() => {
+              if (!paymentMethod) return;
+              setConfirming(true);
+              onPaid(bill, paymentMethod);
+            }}
+          >
+            {confirming
+              ? "Processing..."
+              : `✅ Mark Paid · ₹${bill.grandTotal}`}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function BillingCounter({ restaurantId, onLogout }: Props) {
   const {
     tables,
@@ -27,6 +134,7 @@ export default function BillingCounter({ restaurantId, onLogout }: Props) {
     gstPercent,
     generateBill,
     processPayment,
+    syncExternalOrders,
   } = useRestaurantStore(restaurantId);
 
   const { actor } = useActor();
@@ -41,8 +149,13 @@ export default function BillingCounter({ restaurantId, onLogout }: Props) {
   );
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [backendOrders, setBackendOrders] = useState<Order[]>([]);
+  // Track which bill-request cards have been dismissed to "pending"
+  const [dismissedBillIds, setDismissedBillIds] = useState<Set<string>>(
+    new Set(),
+  );
 
-  // Poll ICP backend every 5 seconds for cross-device order sync
+  // Poll ICP backend every 3 seconds — faster poll to catch bill requests quickly
+  // biome-ignore lint/correctness/useExhaustiveDependencies: syncExternalOrders is a stable zustand action, intentionally omitted
   useEffect(() => {
     async function poll() {
       if (!actorRef.current) return;
@@ -50,13 +163,16 @@ export default function BillingCounter({ restaurantId, onLogout }: Props) {
         actorRef.current,
         restaurantId,
       );
+      // Always update — even empty array is valid (clears stale paid orders)
+      setBackendOrders(fetched);
+      // Sync backend-only orders into local store so generateBill works
       if (fetched.length > 0) {
-        setBackendOrders(fetched);
+        syncExternalOrders(fetched);
       }
     }
 
     poll();
-    const interval = setInterval(poll, 5000);
+    const interval = setInterval(poll, 3000);
     return () => clearInterval(interval);
   }, [restaurantId]);
 
@@ -67,7 +183,8 @@ export default function BillingCounter({ restaurantId, onLogout }: Props) {
     setIsRefreshing(true);
     if (actorRef.current) {
       fetchOrdersFromBackend(actorRef.current, restaurantId).then((fetched) => {
-        if (fetched.length > 0) setBackendOrders(fetched);
+        setBackendOrders(fetched);
+        if (fetched.length > 0) syncExternalOrders(fetched);
         setIsRefreshing(false);
       });
     } else {
@@ -75,62 +192,62 @@ export default function BillingCounter({ restaurantId, onLogout }: Props) {
     }
   }
 
-  const [selectedBill, setSelectedBill] = useState<Bill | null>(null);
-  const [paymentMethod, setPaymentMethod] = useState<
-    "Cash" | "UPI" | "Card" | null
-  >(null);
-  const [paymentSuccess, setPaymentSuccess] = useState(false);
+  // Auto-generate bills for "billed" status orders that don't have a bill yet.
+  // We no longer require the table to exist locally — syncExternalOrders ensures
+  // backend-only orders (placed from customer phones) are in the local store,
+  // and generateBill only needs the order to be present (not the table).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional - bills/generateBill are stable refs, only re-run when orders change
+  useEffect(() => {
+    for (const order of orders) {
+      if (order.status !== "billed") continue;
+      const existing = bills.find((b) => b.orderId === order.id && !b.isPaid);
+      if (existing) continue;
+      try {
+        generateBill(order.id);
+      } catch {
+        // ignore if already generated or order not in local store yet
+      }
+    }
+  }, [orders]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Bills for "billed" orders that haven't been dismissed to pending
+  const billRequestCards = bills.filter((b) => {
+    if (b.isPaid) return false;
+    if (dismissedBillIds.has(b.id)) return false;
+    const order = orders.find((o) => o.id === b.orderId);
+    return order?.status === "billed";
+  });
+
+  function handleMarkPaid(bill: Bill, method: "Cash" | "UPI" | "Card") {
+    processPayment(bill.id, method);
+    toast.success(
+      `Payment of ₹${bill.grandTotal} received via ${method} — ${bill.tableNumber} is now free`,
+    );
+    // Mark on ICP backend so customer phone detects paid status
+    if (actorRef.current) {
+      updateOrderStatusOnBackend(
+        actorRef.current,
+        bill.orderId,
+        "delivered",
+        "paid",
+      );
+    }
+    setDismissedBillIds((prev) => new Set([...prev, bill.id]));
+    setTimeout(() => setActiveTab("paid"), 1500);
+  }
+
+  function handleMarkPending(bill: Bill) {
+    // Dismiss from bill-request section — it stays in Pending tab
+    setDismissedBillIds((prev) => new Set([...prev, bill.id]));
+    setActiveTab("pending");
+    toast.info(`${bill.tableNumber} moved to Pending bills`);
+  }
 
   const occupiedTables = tables.filter((t) => t.isOccupied);
   const pendingBills = bills.filter((b) => !b.isPaid);
   const paidBills = bills
     .filter((b) => b.isPaid)
     .sort((a, b) => (b.paidAt ?? 0) - (a.paidAt ?? 0));
-
-  function handleGenerateBill(tableId: string) {
-    const table = tables.find((t) => t.id === tableId);
-    if (!table?.currentOrderId) return;
-    const order = orders.find((o) => o.id === table.currentOrderId);
-    if (!order) return;
-
-    // Check if bill already exists
-    const existingBill = bills.find((b) => b.orderId === order.id && !b.isPaid);
-    if (existingBill) {
-      setSelectedBill(existingBill);
-      setPaymentMethod(null);
-      setPaymentSuccess(false);
-      return;
-    }
-
-    const bill = generateBill(order.id);
-    setSelectedBill(bill);
-    setPaymentMethod(null);
-    setPaymentSuccess(false);
-  }
-
-  function handleProcessPayment() {
-    if (!selectedBill || !paymentMethod) return;
-    processPayment(selectedBill.id, paymentMethod);
-    setPaymentSuccess(true);
-    toast.success(
-      `Payment of ₹${selectedBill.grandTotal} received via ${paymentMethod}`,
-    );
-    // Mark order as paid on the ICP backend so customer phone knows table is vacant
-    if (actorRef.current) {
-      updateOrderStatusOnBackend(
-        actorRef.current,
-        selectedBill.orderId,
-        "delivered",
-        "paid",
-      );
-    }
-    setTimeout(() => {
-      setSelectedBill(null);
-      setPaymentSuccess(false);
-      setPaymentMethod(null);
-      setActiveTab("paid");
-    }, 2000);
-  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -160,6 +277,7 @@ export default function BillingCounter({ restaurantId, onLogout }: Props) {
               className="gap-1.5"
               title="Refresh"
               disabled={isRefreshing}
+              data-ocid="billing.refresh.button"
             >
               <RefreshCw
                 className={`w-4 h-4 ${isRefreshing ? "animate-spin" : ""}`}
@@ -171,6 +289,7 @@ export default function BillingCounter({ restaurantId, onLogout }: Props) {
               size="sm"
               onClick={onLogout}
               className="gap-1.5"
+              data-ocid="billing.logout.button"
             >
               <LogOut className="w-4 h-4" />
               <span className="hidden sm:inline">Logout</span>
@@ -180,8 +299,37 @@ export default function BillingCounter({ restaurantId, onLogout }: Props) {
       </header>
 
       <main className="max-w-6xl mx-auto px-4 py-6">
+        {/* Bill Requests — auto-surfaced when customers request bill */}
+        {billRequestCards.length > 0 && (
+          <div className="mb-6">
+            <div className="flex items-center gap-2 mb-3">
+              <span className="w-2 h-2 rounded-full bg-orange-500 animate-pulse" />
+              <h2 className="font-display font-bold text-foreground">
+                Bill Requests ({billRequestCards.length})
+              </h2>
+              <Badge className="bg-orange-100 text-orange-700 border-orange-200 text-xs">
+                Customer requested payment
+              </Badge>
+            </div>
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {billRequestCards.map((bill) => (
+                <InlineBillCard
+                  key={bill.id}
+                  bill={bill}
+                  onPaid={handleMarkPaid}
+                  onPending={handleMarkPending}
+                />
+              ))}
+            </div>
+            <Separator className="mt-6" />
+          </div>
+        )}
+
         {/* Tabs */}
-        <div className="flex gap-1 bg-muted rounded-xl p-1 mb-6 max-w-md">
+        <div
+          className="flex gap-1 bg-muted rounded-xl p-1 mb-6 max-w-md"
+          data-ocid="billing.tabs.panel"
+        >
           {(
             [
               { id: "tables", label: `Tables (${occupiedTables.length})` },
@@ -192,6 +340,7 @@ export default function BillingCounter({ restaurantId, onLogout }: Props) {
             <button
               key={tab.id}
               type="button"
+              data-ocid={`billing.${tab.id}.tab`}
               onClick={() => setActiveTab(tab.id)}
               className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-all ${
                 activeTab === tab.id
@@ -208,7 +357,10 @@ export default function BillingCounter({ restaurantId, onLogout }: Props) {
         {activeTab === "tables" && (
           <div>
             {tables.length === 0 ? (
-              <div className="text-center py-16">
+              <div
+                className="text-center py-16"
+                data-ocid="billing.tables.empty_state"
+              >
                 <div className="text-5xl mb-3">🪑</div>
                 <p className="text-muted-foreground">
                   No tables added yet. Add tables in the Admin Panel.
@@ -223,17 +375,17 @@ export default function BillingCounter({ restaurantId, onLogout }: Props) {
                   const subtotal = order
                     ? order.items.reduce((s, i) => s + i.price * i.quantity, 0)
                     : 0;
-                  const existingBill = table.currentOrderId
-                    ? bills.find(
-                        (b) => b.orderId === table.currentOrderId && !b.isPaid,
-                      )
-                    : null;
+                  const isBillRequested = order?.status === "billed";
 
                   return (
                     <div
                       key={table.id}
                       className={`bg-white rounded-2xl border shadow-card overflow-hidden ${
-                        table.isOccupied ? "border-primary/30" : "border-border"
+                        isBillRequested
+                          ? "border-orange-300"
+                          : table.isOccupied
+                            ? "border-primary/30"
+                            : "border-border"
                       }`}
                     >
                       <div className="p-4 flex items-center justify-between border-b border-border">
@@ -242,12 +394,18 @@ export default function BillingCounter({ restaurantId, onLogout }: Props) {
                         </h3>
                         <Badge
                           className={
-                            table.isOccupied
-                              ? "bg-primary/10 text-primary border-primary/20"
-                              : "bg-green-50 text-green-700 border-green-200"
+                            isBillRequested
+                              ? "bg-orange-50 text-orange-700 border-orange-200"
+                              : table.isOccupied
+                                ? "bg-primary/10 text-primary border-primary/20"
+                                : "bg-green-50 text-green-700 border-green-200"
                           }
                         >
-                          {table.isOccupied ? "Occupied" : "Available"}
+                          {isBillRequested
+                            ? "Bill Requested"
+                            : table.isOccupied
+                              ? "Occupied"
+                              : "Available"}
                         </Badge>
                       </div>
                       <div className="p-4">
@@ -281,12 +439,27 @@ export default function BillingCounter({ restaurantId, onLogout }: Props) {
                                   Math.round(subtotal * (gstPercent / 100))}
                               </span>
                             </div>
-                            <Button
-                              className="w-full h-9 text-sm font-semibold bg-primary hover:bg-primary/90 text-white"
-                              onClick={() => handleGenerateBill(table.id)}
-                            >
-                              {existingBill ? "View Bill" : "Generate Bill"}
-                            </Button>
+                            {isBillRequested ? (
+                              <div className="text-xs text-center text-orange-700 bg-orange-50 rounded-lg py-2 font-medium">
+                                See "Bill Requests" above to process payment
+                              </div>
+                            ) : (
+                              <Button
+                                className="w-full h-9 text-sm font-semibold bg-primary hover:bg-primary/90 text-white"
+                                data-ocid="billing.generate_bill.button"
+                                onClick={() => {
+                                  const existingBill = bills.find(
+                                    (b) => b.orderId === order.id && !b.isPaid,
+                                  );
+                                  if (!existingBill) {
+                                    generateBill(order.id);
+                                  }
+                                  setActiveTab("pending");
+                                }}
+                              >
+                                Generate Bill
+                              </Button>
+                            )}
                           </>
                         ) : (
                           <p className="text-sm text-muted-foreground text-center py-2">
@@ -306,7 +479,10 @@ export default function BillingCounter({ restaurantId, onLogout }: Props) {
         {activeTab === "pending" && (
           <div className="space-y-3">
             {pendingBills.length === 0 ? (
-              <div className="text-center py-16">
+              <div
+                className="text-center py-16"
+                data-ocid="billing.pending.empty_state"
+              >
                 <div className="text-5xl mb-3">✅</div>
                 <h3 className="font-display font-bold text-xl text-foreground mb-1">
                   All Clear!
@@ -316,47 +492,52 @@ export default function BillingCounter({ restaurantId, onLogout }: Props) {
                 </p>
               </div>
             ) : (
-              pendingBills.map((bill) => (
-                <div
-                  key={bill.id}
-                  className="bg-white rounded-2xl border border-border shadow-card p-4 flex items-center gap-4"
-                >
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-1">
-                      <h3 className="font-semibold text-foreground">
-                        {bill.tableNumber}
-                      </h3>
-                      <Badge variant="secondary" className="text-xs">
-                        {bill.items.length} items
-                      </Badge>
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      {new Date(bill.createdAt).toLocaleTimeString("en-IN", {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
-                    </p>
-                  </div>
-                  <div className="text-right mr-2">
-                    <p className="font-bold text-lg text-foreground">
-                      ₹{bill.grandTotal}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      incl. GST {bill.gstPercent}%
-                    </p>
-                  </div>
-                  <Button
-                    className="bg-primary hover:bg-primary/90 text-white text-sm font-semibold shrink-0"
-                    onClick={() => {
-                      setSelectedBill(bill);
-                      setPaymentMethod(null);
-                      setPaymentSuccess(false);
-                    }}
+              pendingBills.map((bill) => {
+                const order = orders.find((o) => o.id === bill.orderId);
+                const isBillRequested =
+                  order?.status === "billed" && !dismissedBillIds.has(bill.id);
+                return (
+                  <div
+                    key={bill.id}
+                    data-ocid="billing.pending_bill.card"
+                    className={`bg-white rounded-2xl border shadow-card p-4 ${isBillRequested ? "border-orange-300" : "border-border"}`}
                   >
-                    Process
-                  </Button>
-                </div>
-              ))
+                    <div className="flex items-center gap-4 mb-3">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1">
+                          <h3 className="font-semibold text-foreground">
+                            {bill.tableNumber}
+                          </h3>
+                          {isBillRequested && (
+                            <Badge className="bg-orange-100 text-orange-700 border-orange-200 text-xs">
+                              Bill Requested
+                            </Badge>
+                          )}
+                          <Badge variant="secondary" className="text-xs">
+                            {bill.items.length} items
+                          </Badge>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          {new Date(bill.createdAt).toLocaleTimeString(
+                            "en-IN",
+                            { hour: "2-digit", minute: "2-digit" },
+                          )}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <p className="font-bold text-lg text-foreground">
+                          ₹{bill.grandTotal}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          incl. GST {bill.gstPercent}%
+                        </p>
+                      </div>
+                    </div>
+                    {/* Inline payment for pending bills */}
+                    <PendingBillPayRow bill={bill} onPaid={handleMarkPaid} />
+                  </div>
+                );
+              })
             )}
           </div>
         )}
@@ -365,7 +546,10 @@ export default function BillingCounter({ restaurantId, onLogout }: Props) {
         {activeTab === "paid" && (
           <div className="space-y-3">
             {paidBills.length === 0 ? (
-              <div className="text-center py-16">
+              <div
+                className="text-center py-16"
+                data-ocid="billing.paid.empty_state"
+              >
                 <div className="text-5xl mb-3">📋</div>
                 <p className="text-muted-foreground">No paid bills yet.</p>
               </div>
@@ -373,6 +557,7 @@ export default function BillingCounter({ restaurantId, onLogout }: Props) {
               paidBills.map((bill) => (
                 <div
                   key={bill.id}
+                  data-ocid="billing.paid_bill.card"
                   className="bg-white rounded-2xl border border-border shadow-card p-4 flex items-center gap-4"
                 >
                   <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center shrink-0">
@@ -413,126 +598,46 @@ export default function BillingCounter({ restaurantId, onLogout }: Props) {
           </div>
         )}
       </main>
+    </div>
+  );
+}
 
-      {/* Payment Modal */}
-      {selectedBill && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4">
+// Small inline payment row for the Pending tab
+function PendingBillPayRow({
+  bill,
+  onPaid,
+}: {
+  bill: Bill;
+  onPaid: (bill: Bill, method: "Cash" | "UPI" | "Card") => void;
+}) {
+  const [method, setMethod] = useState<"Cash" | "UPI" | "Card" | null>(null);
+  return (
+    <div className="space-y-2 pt-2 border-t border-border">
+      <div className="flex gap-1.5">
+        {(["Cash", "UPI", "Card"] as const).map((m) => (
           <button
+            key={m}
             type="button"
-            className="absolute inset-0 bg-black/40 backdrop-blur-sm cursor-default"
-            onClick={() => !paymentSuccess && setSelectedBill(null)}
-            onKeyDown={(e) =>
-              e.key === "Escape" && !paymentSuccess && setSelectedBill(null)
-            }
-            aria-label="Close modal"
-          />
-          <div className="relative bg-white rounded-2xl shadow-float w-full max-w-md animate-fade-in">
-            {paymentSuccess ? (
-              <div className="p-8 text-center">
-                <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center mx-auto mb-4">
-                  <CheckCircle className="w-8 h-8 text-green-600" />
-                </div>
-                <h3 className="text-xl font-display font-bold text-foreground mb-2">
-                  Payment Successful!
-                </h3>
-                <p className="text-muted-foreground">
-                  ₹{selectedBill.grandTotal} received via {paymentMethod}
-                </p>
-                <p className="text-sm text-green-600 mt-2">
-                  {selectedBill.tableNumber} has been reset
-                </p>
-              </div>
-            ) : (
-              <>
-                <div className="p-5 border-b border-border flex items-center justify-between">
-                  <h3 className="font-display font-bold text-lg text-foreground">
-                    Bill — {selectedBill.tableNumber}
-                  </h3>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedBill(null)}
-                    className="w-8 h-8 rounded-full bg-muted flex items-center justify-center"
-                  >
-                    <X className="w-4 h-4 text-muted-foreground" />
-                  </button>
-                </div>
-
-                <div className="p-5 space-y-4 max-h-64 overflow-y-auto">
-                  <div className="space-y-2">
-                    {selectedBill.items.map((item) => (
-                      <div
-                        key={item.menuItemId}
-                        className="flex justify-between text-sm"
-                      >
-                        <span className="text-foreground">
-                          {item.name}{" "}
-                          <span className="text-muted-foreground">
-                            × {item.quantity}
-                          </span>
-                        </span>
-                        <span className="font-medium">
-                          ₹{item.price * item.quantity}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                  <Separator />
-                  <div className="space-y-1.5">
-                    <div className="flex justify-between text-sm text-muted-foreground">
-                      <span>Subtotal</span>
-                      <span>₹{selectedBill.subtotal}</span>
-                    </div>
-                    <div className="flex justify-between text-sm text-muted-foreground">
-                      <span>GST ({selectedBill.gstPercent}%)</span>
-                      <span>₹{selectedBill.gstAmount}</span>
-                    </div>
-                    <div className="flex justify-between font-bold text-foreground text-base">
-                      <span>Grand Total</span>
-                      <span className="text-primary">
-                        ₹{selectedBill.grandTotal}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="p-5 border-t border-border space-y-4">
-                  <p className="text-sm font-semibold text-foreground">
-                    Payment Method
-                  </p>
-                  <div className="grid grid-cols-3 gap-2">
-                    {(["Cash", "UPI", "Card"] as const).map((method) => (
-                      <button
-                        key={method}
-                        type="button"
-                        onClick={() => setPaymentMethod(method)}
-                        className={`py-3 rounded-xl border-2 text-sm font-semibold transition-all ${
-                          paymentMethod === method
-                            ? "border-primary bg-primary/10 text-primary"
-                            : "border-border text-muted-foreground hover:border-primary/30"
-                        }`}
-                      >
-                        {method === "Cash"
-                          ? "💵"
-                          : method === "UPI"
-                            ? "📱"
-                            : "💳"}{" "}
-                        {method}
-                      </button>
-                    ))}
-                  </div>
-                  <Button
-                    className="w-full h-12 text-base font-bold bg-primary hover:bg-primary/90 text-white"
-                    disabled={!paymentMethod}
-                    onClick={handleProcessPayment}
-                  >
-                    Confirm Payment · ₹{selectedBill.grandTotal}
-                  </Button>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      )}
+            data-ocid={`billing.pending_method.${m.toLowerCase()}.toggle`}
+            onClick={() => setMethod(m)}
+            className={`flex-1 py-2 rounded-lg border text-xs font-semibold transition-all ${
+              method === m
+                ? "border-primary bg-primary/10 text-primary"
+                : "border-border text-muted-foreground hover:border-primary/30"
+            }`}
+          >
+            {m}
+          </button>
+        ))}
+      </div>
+      <Button
+        data-ocid="billing.pending_pay.button"
+        className="w-full h-9 text-sm font-bold bg-green-600 hover:bg-green-700 text-white"
+        disabled={!method}
+        onClick={() => method && onPaid(bill, method)}
+      >
+        ✅ Mark Paid
+      </Button>
     </div>
   );
 }

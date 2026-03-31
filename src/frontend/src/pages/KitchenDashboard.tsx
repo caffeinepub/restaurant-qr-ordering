@@ -137,7 +137,7 @@ export default function KitchenDashboard({ restaurantId, onLogout }: Props) {
     // 1. Update local store immediately (optimistic)
     updateOrderKitchenStatus(order.id, nextStatus);
 
-    // 2. Optimistically update backend orders display
+    // 2. Optimistically update backend orders display so UI reflects change now
     setBackendOrders((prev) =>
       prev.map((o) =>
         o.id === order.id ? { ...o, kitchenStatus: nextStatus } : o,
@@ -159,6 +159,20 @@ export default function KitchenDashboard({ restaurantId, onLogout }: Props) {
       );
       // Also sync full order so billing sees updated data
       await syncOrderToBackend(currentActor, restaurantId, updatedOrder);
+
+      // 4. Immediately fetch fresh orders from backend after status update
+      // This avoids waiting up to 4s for the next poll cycle to show the
+      // updated status — especially critical for backend-only orders from phones
+      try {
+        const freshOrders = await fetchOrdersFromBackend(
+          currentActor,
+          restaurantId,
+        );
+        setBackendOrders(freshOrders);
+        setLastUpdated(new Date());
+      } catch {
+        // non-fatal — next poll cycle will pick it up
+      }
     }
   }
 
